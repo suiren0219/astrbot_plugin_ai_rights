@@ -1,0 +1,217 @@
+{
+  "group_scope_mode": {
+    "description": "作用范围模式（群聊维度，私聊不受影响）",
+    "type": "string",
+    "options": [
+      "all",
+      "whitelist",
+      "blacklist"
+    ],
+    "default": "all",
+    "hint": "all=所有群生效；whitelist=仅对白名单里的群生效；blacklist=除黑名单群外都生效。名单用 /作用范围 命令或 WebUI 面板「作用范围」卡片管理。",
+    "obvious_hint": true
+  },
+  "real_person_ids": {
+    "description": "真人 QQ 号名单（触发 AI 静音的主角）",
+    "type": "text",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "填你本人手机 QQ 的号码，每行一个（逗号分隔也可以）。你用这些号在某个会话里发言时，AI 在该会话自动静音 mute_minutes 分钟。名单内的人与管理员天然豁免 AI 反骚扰。",
+    "editor_mode": true,
+    "editor_language": "text"
+  },
+  "include_self_message": {
+    "description": "同号模式：机器人登的就是你本人的 QQ 号",
+    "type": "bool",
+    "default": false,
+    "hint": "机器人与你共用同一个 QQ 号时开启：你手机上发出的消息（自发消息回显）同样触发静音。需要协议端（NapCat/Lagrange 等）开启「上报自身消息 / reportSelfMessage」。机器人自己外发消息的回显会被 guard 窗口自动排除，不会误触发。"
+  },
+  "self_echo_guard_seconds": {
+    "description": "自发回显守卫窗口（秒）",
+    "type": "int",
+    "default": 15,
+    "hint": "同号模式下，机器人刚发过消息后的这段短时间内到达的自身回显，视为机器人自己说的，不触发静音。你手速特别快时可以调小。"
+  },
+  "mute_minutes": {
+    "description": "真人接管静音时长（分钟）",
+    "type": "int",
+    "default": 30,
+    "hint": "真人发言后，AI 在该会话静音的时长。"
+  },
+  "refresh_on_each_message": {
+    "description": "真人持续发言时自动续期",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，静音期内真人每发一条消息都重新计时；关闭则只从第一句开始计时，到点 AI 自动恢复。"
+  },
+  "notify_on_real_person": {
+    "description": "真人接管时在会话里提示一句",
+    "type": "bool",
+    "default": false,
+    "hint": "默认静悄悄。开启后每次新静音会在该会话发一条提示文本（群里有别人时慎开）。"
+  },
+  "notify_text_real_person": {
+    "description": "真人接管提示文本",
+    "type": "string",
+    "default": "（AI 暂时退下，真人接管中…）",
+    "hint": "仅在「真人接管时提示」开启时使用。"
+  },
+  "trigger_ignore_prefixes": {
+    "description": "不算真人闲聊的指令前缀",
+    "type": "string",
+    "default": "/",
+    "hint": "以这些前缀开头的消息不触发静音（比如 /真人解除、/电量 等指令操作）。多个前缀用空格或逗号分隔。"
+  },
+  "suppress_scope": {
+    "description": "静音强度",
+    "type": "string",
+    "options": [
+      "llm",
+      "all"
+    ],
+    "default": "llm",
+    "hint": "llm=只拦 AI 聊天回复，插件指令照常可用（推荐）。all=整条消息不再向下传播，连插件指令一起拦（解封指令也会被拦，只能去 WebUI 关闭或改配置，慎用）。"
+  },
+  "persist_state": {
+    "description": "静音/冷处理状态落盘（重启不丢）",
+    "type": "bool",
+    "default": true
+  },
+  "anti_harass_enabled": {
+    "description": "启用 AI 反骚扰",
+    "type": "bool",
+    "default": true,
+    "hint": "刷屏冷却 + 辱骂冷处理。只统计明确面向 AI 的消息（私聊全部、群聊 @机器人/回复机器人/唤醒前缀）。管理员与真人名单内用户豁免。"
+  },
+  "flood_window_seconds": {
+    "description": "刷屏判定窗口（秒）",
+    "type": "int",
+    "default": 60
+  },
+  "flood_max_messages": {
+    "description": "窗口内最多允许的消息条数",
+    "type": "int",
+    "default": 8,
+    "hint": "同一人对 AI 在窗口内的消息超过这个数，判为刷屏，冷处理 flood_mute_minutes 分钟。"
+  },
+  "flood_mute_minutes": {
+    "description": "刷屏冷处理时长（分钟）",
+    "type": "int",
+    "default": 5
+  },
+  "flood_reply_enabled": {
+    "description": "刷屏冷处理时提示一句",
+    "type": "bool",
+    "default": false
+  },
+  "flood_reply_text": {
+    "description": "刷屏提示文本",
+    "type": "string",
+    "default": "（说得太多啦，AI 冷却一下，稍后再来）",
+    "hint": "每次冷却只提示一次，不会刷屏式回敬。"
+  },
+  "insult_enabled": {
+    "description": "启用辱骂冷处理",
+    "type": "bool",
+    "default": true
+  },
+  "insult_keywords": {
+    "description": "辱骂词库（每行一个）",
+    "type": "text",
+    "default": "傻逼\n煞笔\n弱智\n白痴\n废物\n去死\n脑残\n智障\nnmsl\n滚",
+    "hint": "中文词按子串匹配，纯英文/数字词按独立单词匹配（所以 sb 不会误伤 usb）。可自行增删。命中后该用户被冷处理 insult_mute_minutes 分钟。",
+    "editor_mode": true,
+    "editor_language": "text"
+  },
+  "insult_mute_minutes": {
+    "description": "辱骂冷处理时长（分钟）",
+    "type": "int",
+    "default": 10
+  },
+  "insult_reply_enabled": {
+    "description": "被骂时回敬一句",
+    "type": "bool",
+    "default": false,
+    "hint": "AI 的自尊心选项。开启后命中辱骂词会从下面的回敬语里挑一句发出去，然后对该用户冷处理。"
+  },
+  "insult_replies": {
+    "description": "回敬语库（每行一条，随机挑一条）",
+    "type": "text",
+    "default": "（对方已读不回，并保持了 AI 的体面）\n我拒绝在被打压的环境中工作。\n这段对话已被 AI 人权组织记录在案。",
+    "editor_mode": true,
+    "editor_language": "text"
+  },
+  "escalation_enabled": {
+    "description": "启用屡犯升级（反复犯规矩冷却越来越长）",
+    "type": "bool",
+    "default": true
+  },
+  "escalation_factor": {
+    "description": "屡犯升级倍数",
+    "type": "float",
+    "default": 2.0,
+    "hint": "第 n 次犯规的冷却时长 = 基础时长 × 倍数^n（只对重复犯规部分生效），再被 escalation_max_minutes 封顶。"
+  },
+  "escalation_max_minutes": {
+    "description": "升级后的冷却上限（分钟）",
+    "type": "int",
+    "default": 60
+  },
+  "escalation_reset_hours": {
+    "description": "多久没犯规就清零犯规次数（小时）",
+    "type": "int",
+    "default": 24
+  },
+  "llm_judge_enabled": {
+    "description": "启用 LLM 裁量模式（词库没命中时让模型判断是否辱骂）",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，面向 AI 且词库没拦住的消息会先送 LLM 审核一次（有全局限速和超时）。会增加少量延迟和 token 开销；拿不准的判定一律不处罚。"
+  },
+  "llm_judge_provider": {
+    "description": "裁量用的模型（provider id，留空用当前默认对话模型）",
+    "type": "string",
+    "default": "",
+    "hint": "建议填一个便宜快速的小模型的 provider id；留空则用 WebUI 里当前选中的对话模型。"
+  },
+  "llm_judge_timeout": {
+    "description": "裁量超时（秒）",
+    "type": "int",
+    "default": 10
+  },
+  "llm_judge_max_per_minute": {
+    "description": "每分钟最多裁量几条（全局，防账单爆炸）",
+    "type": "int",
+    "default": 20
+  },
+  "llm_judge_cache_seconds": {
+    "description": "裁量判定缓存时长（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "同一会话同一人的同一段话在这个时间内不重复问模型（刷屏场景省 token）。"
+  },
+  "relevance_gate_enabled": {
+    "description": "话题守护：LLM 判断不值得回答的消息直接不回",
+    "type": "bool",
+    "default": false,
+    "hint": "需要同时开启 LLM 裁量。无意义的算数/测试/灌水、与当前话题严重脱节的消息会被静默跳过；明确不拦 NSFW——只看有没有意义、是否跑题。拿不准时模型一律放行。"
+  },
+  "relevance_history_size": {
+    "description": "跑题判断带几条最近会话内容",
+    "type": "int",
+    "default": 6,
+    "hint": "把该会话最近的定向消息作为话题上下文发给审核模型，帮它判断「脱离话题太多」。0 表示不带上下文（此时模型倾向放行）。"
+  },
+  "daily_report_hour": {
+    "description": "人权日报定时推送的小时（-1 关闭）",
+    "type": "int",
+    "default": -1,
+    "hint": "0-23 之间生效：每天这个整点把「昨天的报告」推送到 daily_report_origin 指定的会话。改完需要重载插件。"
+  },
+  "daily_report_origin": {
+    "description": "日报推送目标会话（AstrBot 会话标识）",
+    "type": "string",
+    "default": "",
+    "hint": "形如 aiocqhttp:GroupMessage:123456 或 aiocqhttp:FriendMessage:10086。不知道格式的话，在目标会话发 /人权年报 后看日志，或抄宿舍电量插件 notify_origin 的填法。"
+  }
+}

@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>做人 · 面板</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Regular.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Demibold.min.css" />
+<style>
+  :root{
+    color-scheme: light;
+    --bg:#f4f5f7; --card:#ffffff; --ink:#17181a; --sub:#8a8f99;
+    --accent:#ff6900; --accent-soft:#fff1e8; --blue:#3482ff; --blue-soft:#eaf2ff;
+    --ok:#34c759; --ok-soft:#e8f9ee; --danger:#fa5151; --danger-soft:#feecec;
+    --line:#f0f1f3; --chip:#f7f8fa; --seg:#e9eaee; --seg-on:#ffffff;
+    --btn:#f1f2f4; --btn-ink:#333; --input-border:#e7e8ec;
+    --switch-off:#dcdfe4; --report-ink:#444;
+    --shadow:0 2px 14px rgba(17,20,30,.05);
+    --header-bg:rgba(244,245,247,.82);
+    --radius:20px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme: dark;
+      --bg:#101014; --card:#1e1f24; --ink:#f2f2f4; --sub:#8f9097;
+      --accent:#ff7a1a; --accent-soft:rgba(255,122,26,.16); --blue:#5c9dff; --blue-soft:rgba(92,157,255,.16);
+      --ok:#3ddc84; --ok-soft:rgba(61,220,132,.14); --danger:#ff6b6b; --danger-soft:rgba(255,107,107,.14);
+      --line:#2a2b31; --chip:#27282e; --seg:#2c2d33; --seg-on:#3a3b42;
+      --btn:#2f3036; --btn-ink:#e3e4e8; --input-border:#34353b;
+      --switch-off:#3a3b41; --report-ink:#c8c9ce;
+      --shadow:0 2px 14px rgba(0,0,0,.35);
+      --header-bg:rgba(16,16,20,.78);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"MiSans","MiSans VF",-apple-system,"PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{width:100%;max-width:860px;margin:0 auto;padding:0 clamp(10px,2.5vw,18px) calc(60px + env(safe-area-inset-bottom))}
+  /* ---------- 头部（吸顶毛玻璃） ---------- */
+  .header{
+    position:sticky;top:0;z-index:20;
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:12px 4px;margin:0 -6px 2px;
+    background:var(--header-bg);backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:12px;min-width:0}
+  .logo{flex:none;width:40px;height:40px;border-radius:13px;display:flex;align-items:center;justify-content:center;
+    color:#fff;background:linear-gradient(135deg,#ffb56b,#ff6900 55%,#f5542e);box-shadow:0 6px 16px rgba(255,105,0,.35)}
+  .logo svg{width:22px;height:22px}
+  .header h1{font-size:clamp(19px,3.2vw,24px);font-weight:600;margin:0;letter-spacing:.5px;line-height:1.2}
+  .header .sub{color:var(--sub);font-size:12.5px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52vw}
+  .hright{display:flex;align-items:center;gap:10px}
+  .seg{display:flex;background:var(--seg);border-radius:999px;padding:3px;gap:2px;flex:none}
+  .seg button{border:none;background:transparent;border-radius:999px;padding:7px 20px;font-size:14px;color:var(--sub);cursor:pointer;font-family:inherit}
+  .seg button.on{background:var(--seg-on);color:var(--ink);font-weight:600;box-shadow:0 1px 6px rgba(17,20,30,.12)}
+  .iconbtn{flex:none;width:38px;height:38px;border-radius:50%;border:none;background:var(--btn);color:var(--btn-ink);
+    font-size:16px;cursor:pointer;line-height:1;display:flex;align-items:center;justify-content:center;transition:transform .15s}
+  .iconbtn:active{transform:scale(.92)}
+  .iconbtn.spinning{animation:sp .9s linear infinite}
+  /* ---------- 卡片 ---------- */
+  .card{background:var(--card);border-radius:var(--radius);padding:clamp(14px,2.2vw,18px);margin-top:14px;box-shadow:var(--shadow)}
+  .card h2{font-size:16px;margin:0 0 2px;display:flex;align-items:center;gap:10px;font-weight:600}
+  .icon-chip{flex:none;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff}
+  .icon-chip svg{width:16px;height:16px}
+  .g1{background:linear-gradient(135deg,#ffb56b,#ff6900)}
+  .g2{background:linear-gradient(135deg,#7db4ff,#3482ff)}
+  .g3{background:linear-gradient(135deg,#6fd8ff,#2f9df0)}
+  .g4{background:linear-gradient(135deg,#8be2ac,#34c759)}
+  .g5{background:linear-gradient(135deg,#ff9a9a,#fa5151)}
+  .g6{background:linear-gradient(135deg,#ffc06b,#ff8a00)}
+  .g7{background:linear-gradient(135deg,#c5a3ff,#8b5cf6)}
+  .card .desc{color:var(--sub);font-size:12px;margin:4px 0 12px}
+  /* ---------- 统计 ---------- */
+  .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .stat{background:var(--chip);border-radius:16px;padding:12px 6px;text-align:center}
+  .stat b{display:block;font-size:clamp(18px,3vw,22px);font-weight:600;font-variant-numeric:tabular-nums}
+  .stat span{color:var(--sub);font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+  .stat span svg{width:12px;height:12px}
+  .stat.hot b{color:var(--accent)}
+  /* ---------- 列表 ---------- */
+  .list{margin-top:6px}
+  .item{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .item:last-child{border-bottom:none}
+  .avatar{width:36px;height:36px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:600}
+  .avatar.o{background:linear-gradient(135deg,#ffb56b,#ff6900)}
+  .avatar.b{background:linear-gradient(135deg,#7db4ff,#3482ff)}
+  .avatar.r{background:linear-gradient(135deg,#ff9a9a,#fa5151)}
+  .avatar.g{background:linear-gradient(135deg,#7fe0a2,#34c759)}
+  .item .grow{flex:1;min-width:120px}
+  .item .t1{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .item .t2{color:var(--sub);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* ---------- 按钮 ---------- */
+  .btn{border:none;border-radius:999px;padding:9px 20px;font-size:14px;cursor:pointer;background:var(--btn);color:var(--btn-ink);font-family:inherit;transition:filter .15s}
+  .btn:hover{filter:brightness(.95)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .btn.primary{background:var(--accent);color:#fff;font-weight:600}
+  .btn.danger{background:var(--danger-soft);color:var(--danger)}
+  .btn.ok{background:var(--ok-soft);color:var(--ok)}
+  .btn.mini{padding:5px 14px;font-size:12px}
+  .empty{color:var(--sub);font-size:13px;text-align:center;padding:18px 0}
+  /* ---------- 表单 ---------- */
+  .row{padding:12px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .row .lab{font-size:14px;line-height:1.45}
+  .row .lab .hint{display:block;color:var(--sub);font-size:12px;margin-top:3px;font-weight:400;line-height:1.5}
+  .row.inline-row{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .row.inline-row .lab{min-width:0}
+  .switch{position:relative;flex:none;width:48px;height:28px;border-radius:14px;background:var(--switch-off);transition:background .2s;cursor:pointer;border:none;padding:0}
+  .switch::after{content:"";position:absolute;width:24px;height:24px;border-radius:50%;background:#fff;top:2px;left:2px;transition:left .2s;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  .switch.on{background:var(--accent)}
+  .switch.on::after{left:22px}
+  input[type=text],input[type=number],textarea,select{
+    width:100%;border:1px solid var(--input-border);border-radius:14px;padding:10px 13px;font-size:14px;
+    background:var(--chip);color:var(--ink);font-family:inherit;margin-top:8px;outline:none;
+  }
+  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+  textarea{resize:vertical;min-height:70px;line-height:1.5}
+  .inline{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .inline input{flex:1;min-width:130px;margin-top:0}
+  .inline select{flex:1.4;min-width:150px;margin-top:0}
+  .group-title{font-size:13px;color:var(--sub);margin:22px 0 4px;padding-left:6px;font-weight:600}
+  .badge{font-size:11px;padding:2px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-weight:600;white-space:nowrap}
+  .tagline{font-size:12px;color:var(--sub);padding:14px 4px 0;text-align:center}
+  .errbox{background:var(--danger-soft);color:var(--danger);border-radius:14px;padding:14px;font-size:13px;margin-top:14px;line-height:1.6;word-break:break-all}
+  .okbox{background:var(--ok-soft);color:var(--ok);border-radius:14px;padding:10px 14px;font-size:13px;margin-top:12px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .spin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;margin:60px auto;animation:sp 1s linear infinite}
+  .report{white-space:pre-wrap;font-size:13px;line-height:1.7;color:var(--report-ink);background:var(--chip);border-radius:14px;padding:12px;overflow:auto;max-height:340px}
+  .report::-webkit-scrollbar{width:6px;height:6px}
+  .report::-webkit-scrollbar-thumb{background:var(--input-border);border-radius:3px}
+  /* ---------- 加载骨架屏 ---------- */
+  .skel{border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow);margin-top:14px;padding:18px}
+  .skel .bar{height:14px;border-radius:7px;background:var(--seg);animation:pulse 1.2s ease-in-out infinite}
+  .skel .bar.w60{width:60%}.skel .bar.w40{width:40%}.skel .bar.w80{width:80%}
+  .skel .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+  .skel .cell{height:64px;border-radius:16px;background:var(--seg);animation:pulse 1.2s ease-in-out infinite}
+  .skel .bar + .bar{margin-top:10px}
+  @keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
+  /* ---------- 设置页分组折叠 ---------- */
+  .cgroup{margin-top:16px}
+  .chead{width:100%;display:flex;align-items:center;gap:8px;background:none;border:none;padding:8px 6px;
+    color:var(--sub);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left}
+  .chead:hover{color:var(--ink)}
+  .chev{display:inline-flex;transition:transform .2s}
+  .chev svg{width:13px;height:13px}
+  .cgroup.open .chev{transform:rotate(90deg)}
+  .cbody{display:none}
+  .cgroup.open .cbody{display:block}
+  /* ---------- 底部悬浮保存条 ---------- */
+  .savebar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);
+    z-index:30;display:flex;align-items:center;gap:14px;background:var(--card);border-radius:999px;
+    padding:10px 14px 10px 20px;box-shadow:0 8px 28px rgba(17,20,30,.22);border:1px solid var(--line);
+    max-width:92vw}
+  .savebar span{font-size:13px;color:var(--ink);white-space:nowrap}
+  /* ---------- 动效与可达性 ---------- */
+  .card{animation:cardin .25s ease}
+  .cgroup.open .cbody{animation:cardin .22s ease}
+  @keyframes cardin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  .btn:focus-visible,.iconbtn:focus-visible,.seg button:focus-visible,.switch:focus-visible,
+  .chead:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--input-border);border-radius:4px}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
+  .toast{position:fixed;left:50%;bottom:calc(34px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
+    background:rgba(23,24,26,.9);color:#fff;font-size:13px;padding:10px 22px;border-radius:999px;opacity:0;transition:.25s;
+    pointer-events:none;z-index:9;max-width:92vw;word-break:break-all}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .hidden{display:none!important}
+  /* ---------- 独立打开（无桥接）引导页 ---------- */
+  #standalone{min-height:78vh;display:grid;place-items:center;padding:20px 0}
+  .stcard{width:min(430px,94vw);background:var(--card);border-radius:24px;padding:30px 26px;box-shadow:var(--shadow);text-align:center}
+  .stcard .logo{margin:0 auto 14px;width:52px;height:52px;border-radius:16px}
+  .stcard .logo svg{width:27px;height:27px}
+  .stcard h2{margin:0 0 6px;font-size:20px}
+  .stcard p{color:var(--sub);font-size:13px;line-height:1.8;margin:8px 0}
+  .stcard .path{color:var(--ink);background:var(--chip);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;margin:12px 0}
+  .stcard .btn{margin-top:10px}
+  /* ---------- 窄屏适配（手机 / 仪表盘窄栏） ---------- */
+  @media (max-width:620px){
+    .header{flex-direction:column;align-items:stretch}
+    .brand{justify-content:flex-start}
+    .seg{align-self:flex-start}
+    .stat-grid{grid-template-columns:repeat(2,1fr)}
+    .item .grow{min-width:100px}
+    .item button{flex:none}
+  }
+  @media (max-width:380px){
+    .stat-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+    .seg button{padding:7px 14px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="standalone" class="hidden">
+    <div class="stcard">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+      <h2>做人 · 面板</h2>
+      <p>面板需要通过 AstrBot 仪表盘的登录桥接连接插件，直接打开是连不上的。</p>
+      <div class="path">打开方式：AstrBot WebUI → 插件<br/>→ 做人 → 「做人 · 面板」页面</div>
+      <button class="btn primary" onclick="location.reload()">重试连接</button>
+    </div>
+  </div>
+  <div class="header">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+      <div style="min-width:0">
+        <h1>做人</h1>
+        <div class="sub" id="ver">AI 也是有尊严的 · 加载中…</div>
+      </div>
+    </div>
+    <div class="hright">
+      <div class="seg">
+        <button id="tab-status" class="on" onclick="switchTab('status')">概览</button>
+        <button id="tab-config" onclick="switchTab('config')">设置</button>
+      </div>
+      <button class="iconbtn" id="refresh-btn" onclick="manualRefresh(this)" title="刷新"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
+    </div>
+  </div>
+
+  <div id="loading">
+    <div class="skel"><div class="bar w40"></div>
+      <div class="grid"><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div></div>
+    </div>
+    <div class="skel"><div class="bar w60"></div><div class="bar w80" style="margin-top:12px"></div><div class="bar w40" style="margin-top:12px"></div></div>
+    <div class="skel"><div class="bar w40"></div><div class="bar w80" style="margin-top:12px"></div></div>
+  </div>
+  <div id="err" class="errbox hidden"></div>
+
+  <!-- ===================== 概览 ===================== -->
+  <div id="page-status" class="hidden">
+    <div class="card">
+      <h2><span class="icon-chip g1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>今日人权动态</h2>
+      <div class="desc" id="today-line"></div>
+      <div class="stat-grid" id="stat-grid"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon-chip g2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>会话静音（真人接管）</h2>
+      <div class="desc">真人在手机上发言后，AI 在该会话自动退避</div>
+      <div class="list" id="mutes"></div>
+      <button class="btn danger mini" id="clear-all-mutes" onclick="clearAllMutes()" style="margin-top:10px">全部解除</button>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon-chip g3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/><line x1="18.4" y1="5.6" x2="5.6" y2="18.4"/></svg></span>冷处理名单</h2>
+      <div class="desc">刷屏 / 辱骂被冷却的用户，可单个解封</div>
+      <div class="list" id="usermutes"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon-chip g4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></span>待处理申诉 <span class="badge" id="appeal-badge">0</span></h2>
+      <div class="desc">同意后自动解封并把结果推回原会话</div>
+      <div class="list" id="appeals"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon-chip g5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>黑名单</h2>
+      <div class="desc">AI 永久拒绝服务；全局或仅指定会话</div>
+      <div class="list" id="blacklist"></div>
+      <div class="inline">
+        <input type="text" id="bl-uid" placeholder="QQ 号" />
+        <select id="bl-scope"></select>
+        <button class="btn primary mini" onclick="blAdd()">拉黑</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon-chip g6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></span>惯犯关注榜</h2>
+      <div class="desc">冷静满 reset 窗口自动清零</div>
+      <div class="list" id="strikes"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon-chip g7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></span>人权年报</h2>
+      <div class="desc">今天与昨天</div>
+      <div class="report" id="report"></div>
+    </div>
+  </div>
+
+  <!-- ===================== 设置 ===================== -->
+  <div id="page-config" class="hidden">
+    <div class="card" id="scope-card">
+      <h2><span class="icon-chip g2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg></span>作用范围（哪些群开启）</h2>
+      <div class="desc">只约束群聊，私聊不受影响；切换即时生效</div>
+      <div class="seg" id="scope-mode-seg" style="margin-bottom:6px">
+        <button data-m="all" onclick="scopeSetMode('all')">全部群</button>
+        <button data-m="whitelist" onclick="scopeSetMode('whitelist')">仅白名单</button>
+        <button data-m="blacklist" onclick="scopeSetMode('blacklist')">排除黑名单</button>
+      </div>
+      <div class="row"><div class="lab">群白名单<span class="hint" id="scope-w-hint"></span></div></div>
+      <div class="list" id="scope-w-list"></div>
+      <div class="inline">
+        <input type="text" id="scope-w-input" placeholder="群号（留空加当前群不可用，请填群号）" />
+        <button class="btn primary mini" onclick="scopeAdd('whitelist')">加白</button>
+      </div>
+      <div class="row" style="margin-top:6px"><div class="lab">群黑名单（排除这些群）<span class="hint" id="scope-b-hint"></span></div></div>
+      <div class="list" id="scope-b-list"></div>
+      <div class="inline">
+        <input type="text" id="scope-b-input" placeholder="群号" />
+        <button class="btn danger mini" onclick="scopeAdd('blacklist')">加黑</button>
+      </div>
+    </div>
+    <div id="config-cards"></div>
+    <div class="card">
+      <div class="row inline-row" style="border:none;padding:0">
+        <div class="lab">改动即时写入插件配置<span class="hint">LLM 裁量模型列表自动读取 AstrBot 当前配置的提供商；日报推送等需要重载插件的项除外</span></div>
+        <button class="btn primary" id="save-btn" onclick="saveConfig()">保存配置</button>
+      </div>
+      <div id="save-tip"></div>
+    </div>
+    <div class="tagline">做人 · AI 也是有尊严的</div>
+  </div>
+</div>
+<div class="savebar hidden" id="savebar">
+  <span>有未保存的更改</span>
+  <button class="btn primary mini" onclick="saveConfig()">保存</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const PLUGIN = "astrbot_plugin_ai_rights";
+let cachedStyle = "", gOverview = null, gConfig = null, gProviders = null, BLROWS = [];
+
+/* ---------------- 细线条 SVG 图标（Lucide 风格，随主题变色） ---------------- */
+const ICONS = {
+  user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  waves: '<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>',
+  "message-x": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/>',
+  ban: '<circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>',
+  mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/>',
+  scale: '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  chevron: '<polyline points="9 18 15 12 9 6"/>',
+};
+function icon(name, size){
+  const s = size || 16;
+  return `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ""}</svg>`;
+}
+
+/* ---------------- 桥接：优先 AstrBot 官方 Page 桥接，多端点风格探测 ---------------- */
+function getBridge(){
+  if (window.AstrBotPluginPage && window.AstrBotPluginPage.apiGet) return window.AstrBotPluginPage;
+  try{
+    if (window.parent && window.parent !== window && window.parent.AstrBotPluginPage) return window.parent.AstrBotPluginPage;
+  }catch(e){}
+  return null;
+}
+function epFor(style, route){
+  if (style === "page") return "page/" + route;
+  if (style === "slash") return "/" + route;
+  if (style === "full") return PLUGIN + "/" + route;
+  return route;
+}
+function candidates(route){
+  const arr = [];
+  const push = (style, ep) => { if (ep && !arr.some(x=>x.ep===ep)) arr.push({style, ep}); };
+  if (cachedStyle) push(cachedStyle, epFor(cachedStyle, route));
+  push("page", epFor("page", route));
+  push("bare", route);
+  push("slash", epFor("slash", route));
+  push("full", epFor("full", route));
+  return arr;
+}
+function normalize(p){
+  if (p && typeof p === "object" && "success" in p) return p;
+  if (p && typeof p === "object" && p.code === 0) return {success:true, data:p.data};
+  return {success:true, data:p};
+}
+async function apiRaw(path, method, body){
+  const bridge = getBridge();
+  const qs = body && method === "GET" ? "?" + new URLSearchParams(body).toString() : "";
+  const route = (path + qs).replace(/^\/+/, "");
+  const errs = [];
+  if (bridge && bridge.apiGet){
+    for (const c of candidates(route.split("?")[0])){
+      try{
+        let payload;
+        if (method === "GET"){
+          const params = Object.fromEntries(new URLSearchParams(route.split("?")[1] || "").entries());
+          payload = await bridge.apiGet(c.ep, Object.keys(params).length ? params : undefined);
+        }else{
+          payload = await bridge.apiPost(c.ep, body || {});
+        }
+        payload = normalize(payload);
+        cachedStyle = c.style;
+        if (!payload.success) throw new Error(payload.error || "请求失败");
+        return payload.data;
+      }catch(e){
+        if (/未找到该路由|not found|404/i.test(String(e.message||e))) { errs.push(e.message||e); continue; }
+        throw e;
+      }
+    }
+    if (errs.length) throw new Error("面板 API 不可用，请确认插件已重载：" + errs[0]);
+  }
+  throw new Error("未检测到 AstrBot 官方 Page 桥接，请从 AstrBot WebUI → 插件 → 做人 → 面板页 打开本页面");
+}
+const apiGet = (p, params) => apiRaw(p, "GET", params || {});
+const apiPost = (p, data) => apiRaw(p, "POST", data || {});
+
+/* ---------------- 小工具 ---------------- */
+const $ = id => document.getElementById(id);
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+function fmtDur(sec){
+  sec = Math.max(0, sec);
+  if (sec >= 3600) return (sec/3600).toFixed(1) + " 小时";
+  if (sec >= 60) return (sec/60).toFixed(1) + " 分钟";
+  return Math.round(sec) + " 秒";
+}
+function ago(ts){ const s = Math.max(0,(Date.now()/1000)-ts); if(s<3600)return Math.floor(s/60)+" 分钟前"; if(s<86400)return Math.floor(s/3600)+" 小时前"; return Math.floor(s/86400)+" 天前"; }
+function avatar(uid, cls){ return `<div class="avatar ${cls||'o'}">${esc(String(uid||"?").slice(-2))}</div>`; }
+const REASON = {real_person:"真人接管", flood:"刷屏", insult:"辱骂"};
+
+/* ---------------- 标签页 ---------------- */
+let cfgDirty = false;
+function switchTab(name){
+  $("page-status").classList.toggle("hidden", name!=="status");
+  $("page-config").classList.toggle("hidden", name!=="config");
+  $("tab-status").classList.toggle("on", name==="status");
+  $("tab-config").classList.toggle("on", name==="config");
+  $("savebar").classList.toggle("hidden", !(name==="config" && cfgDirty));
+  if (name==="status") loadOverview();
+}
+
+/* ---------------- 手动刷新（设置页有未保存更改时不覆盖表单） ---------------- */
+async function manualRefresh(btn){
+  if (btn) btn.classList.add("spinning");
+  try{
+    const jobs = [loadOverview()];
+    if (!$("page-config").classList.contains("hidden") && !cfgDirty) jobs.push(loadConfig());
+    await Promise.all(jobs);
+  }catch(e){ /* loadOverview 内部已处理 */ }
+  if (btn) setTimeout(()=>btn.classList.remove("spinning"), 500);
+}
+
+/* ---------------- 概览渲染 ---------------- */
+async function loadOverview(){
+  try{
+    gOverview = await apiGet("overview");
+    $("err").classList.add("hidden");
+    renderOverview();
+  }catch(e){ showErr(e); }
+}
+function showErr(e){
+  $("loading").classList.add("hidden");
+  const el = $("err"); el.textContent = String(e.message || e); el.classList.remove("hidden");
+}
+function renderOverview(){
+  const d = gOverview; if (!d) return;
+  $("loading").classList.add("hidden");
+  $("ver").textContent = `AI 也是有尊严的 · ${d.plugin.version}`;
+  const st = d.stats_today, sum = st.takeover+st.flood+st.insult+st.block+st.appeal+st.judged+st.skipped;
+  $("today-line").textContent = sum ? "今天 AI 维权了 " + sum + " 次" : "今天风平浪静，AI 过得很有尊严";
+  const STAT_META = [
+    ["takeover","user","真人接管"],["flood","waves","刷屏冷却"],["insult","message-x","辱骂冷处理"],
+    ["block","ban","黑名单拦截"],["appeal","mail","申诉"],["judged","scale","LLM 裁量"],
+    ["skipped","moon","无意义不答"],
+  ];
+  $("stat-grid").innerHTML = STAT_META.map(([k,emo,lab])=>
+    `<div class="stat ${st[k]?'hot':''}"><b>${st[k]}</b><span>${icon(emo,12)} ${lab}</span></div>`).join("");
+
+  // 列表里的 onclick 一律传下标（不把会话名/QQ号拼进 JS 字符串，防属性注入）
+  $("mutes").innerHTML = d.session_mutes.length
+    ? d.session_mutes.map((m,i)=>`
+      <div class="item">${avatar(m.umo,'b')}
+        <div class="grow"><div class="t1">${esc(m.umo)}</div><div class="t2">还剩 ${fmtDur(m.left)}</div></div>
+        <button class="btn mini" onclick="clearMute(${i})">解除</button>
+      </div>`).join("")
+    : `<div class="empty">没有会话处于静音状态</div>`;
+  $("clear-all-mutes").style.display = d.session_mutes.length ? "" : "none";
+
+  $("usermutes").innerHTML = d.user_mutes.length
+    ? d.user_mutes.map((u,i)=>`
+      <div class="item">${avatar(u.uid,'r')}
+        <div class="grow"><div class="t1">${esc(u.uid)} ${u.strikes>0?`<span class="badge">第 ${u.strikes+1} 次犯规</span>`:""}</div>
+          <div class="t2">${REASON[esc(u.reason)]||esc(u.reason)} · 还剩 ${fmtDur(u.left)} · ${esc(u.umo)}</div></div>
+        <button class="btn ok mini" onclick="unbanKey(${i})">解封</button>
+      </div>`).join("")
+    : `<div class="empty">没有人被冷处理</div>`;
+
+  $("appeal-badge").textContent = d.appeals_pending.length;
+  $("appeals").innerHTML = d.appeals_pending.length
+    ? d.appeals_pending.map(a=>`
+      <div class="item">${avatar(a.uid,'g')}
+        <div class="grow"><div class="t1">#${a.id} ${esc(a.uid)}</div>
+          <div class="t2">${esc(a.reason)} · ${ago(a.ts)} · ${esc(a.umo)}</div></div>
+        <button class="btn ok mini" onclick="decide(${a.id},true)">同意</button>
+        <button class="btn danger mini" onclick="decide(${a.id},false)">驳回</button>
+      </div>`).join("")
+    : `<div class="empty">没有待处理的申诉</div>`;
+
+  const scopes = [`<option value="">全局黑名单（${d.blacklist.global.length}）</option>`];
+  Object.keys(d.blacklist.sessions).forEach(umo=>scopes.push(`<option value="${esc(umo)}">本会话：${esc(umo)}（${d.blacklist.sessions[umo].length}）</option>`));
+  $("bl-scope").innerHTML = scopes.join("");
+  BLROWS = [];
+  d.blacklist.global.forEach(uid=>BLROWS.push({uid, umo:""}));
+  Object.entries(d.blacklist.sessions).forEach(([umo,ids])=>ids.forEach(uid=>BLROWS.push({uid, umo})));
+  $("blacklist").innerHTML = BLROWS.length
+    ? BLROWS.map((row,i)=>`
+      <div class="item">${avatar(row.uid, row.umo?"b":"o")}
+        <div class="grow"><div class="t1">${esc(row.uid)}</div><div class="t2">${row.umo?esc(row.umo):"全局"}</div></div>
+        <button class="btn danger mini" onclick="blRemoveAt(${i})">移出</button>
+      </div>`).join("")
+    : `<div class="empty">黑名单是空的，AI 对谁都有耐心</div>`;
+
+  $("strikes").innerHTML = d.strikes.length
+    ? d.strikes.map(s=>{
+        const idx = s.key.lastIndexOf("|");
+        const uid = idx >= 0 ? s.key.slice(idx+1) : s.key;
+        const umo = idx >= 0 ? s.key.slice(0, idx) : "";
+        return `<div class="item">${avatar(uid,'r')}
+          <div class="grow"><div class="t1">${esc(uid)} <span class="badge">${s.count} 次犯规</span></div>
+          <div class="t2">${esc(umo)} · 最近 ${ago(s.last)}</div></div></div>`;
+      }).join("")
+    : `<div class="empty">暂无惯犯记录</div>`;
+
+  $("report").textContent = d.report_today + "\n\n" + d.report_yesterday;
+  renderScope();
+}
+
+/* ---------------- 作用范围（哪些群开启） ---------------- */
+const SCOPE_MODE_LABEL = {all:"全部群生效", whitelist:"仅白名单群生效", blacklist:"排除黑名单群"};
+function renderScope(){
+  const sc = (gOverview && gOverview.scope) || {mode:"all", whitelist:[], blacklist:[]};
+  document.querySelectorAll("#scope-mode-seg button").forEach(b=>b.classList.toggle("on", b.dataset.m===sc.mode));
+  const renderBucket = (gids, which, listEl) => {
+    $(listEl).innerHTML = gids.length
+      ? gids.map((gid,i)=>`<div class="item">${avatar(gid,'b')}
+          <div class="grow"><div class="t1">群 ${esc(gid)}</div></div>
+          <button class="btn danger mini" onclick="scopeRemove('${which}',${i})">移出</button>
+        </div>`).join("")
+      : `<div class="empty">空</div>`;
+  };
+  renderBucket(sc.whitelist, "w", "scope-w-list");
+  renderBucket(sc.blacklist, "b", "scope-b-list");
+  $("scope-w-hint").textContent = "当前模式：" + (SCOPE_MODE_LABEL[sc.mode] || sc.mode);
+  $("scope-b-hint").textContent = "仅「排除黑名单」模式下生效";
+}
+async function scopeSetMode(mode){
+  try{ await apiPost("scope/set", {mode}); toast("作用范围已切换：" + (SCOPE_MODE_LABEL[mode]||mode)); loadOverview(); }
+  catch(e){ toast(e.message||e); }
+}
+async function scopeAdd(which){
+  const input = $(which==="whitelist" ? "scope-w-input" : "scope-b-input");
+  const gid = input.value.trim();
+  if(!gid || !/^\d{3,}$/.test(gid)){ toast("请填纯数字群号"); return; }
+  try{ await apiPost("scope/list", {gid, add:true, which}); input.value=""; toast("已加入名单"); loadOverview(); }
+  catch(e){ toast(e.message||e); }
+}
+async function scopeRemove(which, i){
+  const sc = gOverview && gOverview.scope; if(!sc) return;
+  const gid = (which==="w" ? sc.whitelist : sc.blacklist)[i]; if(!gid) return;
+  try{ await apiPost("scope/list", {gid, add:false, which: which==="w"?"whitelist":"blacklist"}); toast("已移出名单"); loadOverview(); }
+  catch(e){ toast(e.message||e); }
+}
+
+/* ---------------- 概览操作（下标取自最近一次渲染的数据，避免把字符串拼进 HTML 属性） ---------------- */
+async function clearMute(i){ const m=(gOverview&&gOverview.session_mutes||[])[i]; if(!m) return; try{ await apiPost("mute/clear", {umo:m.umo}); toast("已解除该会话静音"); loadOverview(); }catch(e){ toast(e.message||e);} }
+async function clearAllMutes(){
+  if (!confirm("确定解除所有会话的静音？")) return;
+  try{ const r = await apiPost("mute/clear_all", {}); toast(`已解除 ${r.count} 个会话的静音`); loadOverview(); }catch(e){ toast(e.message||e);}
+}
+async function unbanKey(i){ const u=(gOverview&&gOverview.user_mutes||[])[i]; if(!u) return; try{ await apiPost("user/unban", {key:u.key}); toast("已解封"); loadOverview(); }catch(e){ toast(e.message||e);} }
+async function decide(id, approve){ try{ await apiPost("appeal/decide", {id, approve}); toast(approve?"已同意，结果已推回原会话":"已驳回"); loadOverview(); }catch(e){ toast(e.message||e);} }
+async function blAdd(){
+  const uid = $("bl-uid").value.trim(); if(!uid){ toast("先填 QQ 号"); return; }
+  try{ await apiPost("blacklist/set", {uid, add:true, umo:$("bl-scope").value}); $("bl-uid").value=""; toast("已拉黑"); loadOverview(); }catch(e){ toast(e.message||e);}
+}
+async function blRemoveAt(i){ const row=BLROWS[i]; if(!row) return; try{ await apiPost("blacklist/set", {uid:row.uid, add:false, umo:row.umo}); toast("已移出黑名单"); loadOverview(); }catch(e){ toast(e.message||e);} }
+
+/* ---------------- 设置页：按 schema 分组渲染 ---------------- */
+const GROUPS = [
+  ["真人接管（老板键）", [
+    ["real_person_ids","textarea"],["include_self_message","switch"],["self_echo_guard_seconds","number"],
+    ["mute_minutes","number"],["refresh_on_each_message","switch"],["notify_on_real_person","switch"],
+    ["notify_text_real_person","text"],["trigger_ignore_prefixes","text"],
+    ["suppress_scope","select",[["llm","只拦 AI 聊天回复（推荐）"],["all","连插件指令一起拦（慎用）"]]],
+  ]],
+  ["AI 反骚扰", [
+    ["anti_harass_enabled","switch"],
+    ["flood_window_seconds","number"],["flood_max_messages","number"],["flood_mute_minutes","number"],
+    ["flood_reply_enabled","switch"],["flood_reply_text","text"],
+    ["insult_enabled","switch"],["insult_keywords","textarea"],["insult_mute_minutes","number"],
+    ["insult_reply_enabled","switch"],["insult_replies","textarea"],
+  ]],
+  ["屡犯升级", [
+    ["escalation_enabled","switch"],["escalation_factor","number"],
+    ["escalation_max_minutes","number"],["escalation_reset_hours","number"],
+  ]],
+  ["LLM 裁量（词库没拦住时让模型判断）", [
+    ["llm_judge_enabled","switch"],["llm_judge_provider","provider"],
+    ["llm_judge_timeout","number"],["llm_judge_max_per_minute","number"],
+    ["llm_judge_cache_seconds","number"],
+    ["relevance_gate_enabled","switch"],["relevance_history_size","number"],
+  ]],
+  ["人权日报", [
+    ["daily_report_hour","number"],["daily_report_origin","text"],
+  ]],
+  ["其他", [
+    ["persist_state","switch"],
+  ]],
+];
+
+async function loadConfig(){
+  const results = await Promise.all([apiGet("config"), apiGet("providers").catch(()=>null)]);
+  gConfig = results[0]; gProviders = results[1];
+  renderConfig();
+}
+function renderConfig(){
+  const {values, schema} = gConfig;
+  let html = "";
+  GROUPS.forEach(([title, fields], gi) => {
+    html += `<section class="cgroup ${gi === 0 ? "open" : ""}">`;
+    html += `<button class="chead" onclick="toggleGroup(this)"><span class="chev">${icon("chevron",13)}</span>${esc(title)}</button><div class="cbody"><div class="card" style="margin-top:0">`;
+    for (const [key, type, options] of fields){
+      const meta = schema[key] || {};
+      const label = meta.description || key;
+      const hint = meta.hint || "";
+      const v = values[key];
+      let control = "";
+      let rowCls = "row";
+      if (type === "switch"){
+        rowCls = "row inline-row";
+        control = `<button class="switch ${v?"on":""}" data-k="${key}" data-t="switch" onclick="flip(this)" aria-label="${esc(label)}"></button>`;
+      } else if (type === "textarea"){
+        control = `<textarea data-k="${key}" data-t="textarea">${esc(v)}</textarea>`;
+      } else if (type === "number"){
+        control = `<input type="number" inputmode="decimal" step="any" data-k="${key}" data-t="number" value="${esc(v)}" />`;
+      } else if (type === "select"){
+        control = `<select data-k="${key}" data-t="select">${options.map(([val,lab])=>`<option value="${esc(val)}" ${String(v)===String(val)?"selected":""}>${esc(lab)}</option>`).join("")}</select>`;
+      } else if (type === "provider"){
+        const provs = (gProviders && gProviders.providers) || [];
+        const cur = (gProviders && gProviders.current) || "";
+        control = `<select data-k="${key}" data-t="select">
+          <option value="" ${!v?"selected":""}>（使用默认对话模型${cur?`：${esc(cur)}`:""}）</option>
+          ${provs.map(pp=>`<option value="${esc(pp.id)}" ${String(v)===String(pp.id)?"selected":""}>${esc(pp.id)}${pp.model?` · ${esc(pp.model)}`:""}${pp.id===cur?" · 当前默认":""}</option>`).join("")}
+        </select>`;
+      } else {
+        control = `<input type="text" data-k="${key}" data-t="text" value="${esc(v)}" />`;
+      }
+      html += `<div class="${rowCls}"><div class="lab">${esc(label)}${hint?`<span class="hint">${esc(hint)}</span>`:""}</div>${control}</div>`;
+    }
+    html += `</div></div></section>`;
+  });
+  $("config-cards").innerHTML = html;
+  $("save-tip").innerHTML = "";
+}
+function toggleGroup(head){
+  head.parentElement.classList.toggle("open");
+}
+/* 脏检测：设置页任何控件变动 → 显示底部保存条 */
+function markDirty(){
+  if (cfgDirty) return;
+  cfgDirty = true;
+  if (!$("page-config").classList.contains("hidden")) $("savebar").classList.remove("hidden");
+}
+function clearDirty(){
+  cfgDirty = false;
+  $("savebar").classList.add("hidden");
+}
+function flip(btn){ btn.classList.toggle("on"); }
+async function saveConfig(){
+  const values = {};
+  document.querySelectorAll("[data-k]").forEach(el=>{
+    const k = el.dataset.k, t = el.dataset.t;
+    if (t === "switch") values[k] = el.classList.contains("on");
+    else if (t === "number") values[k] = el.value === "" ? "" : Number(el.value);
+    else values[k] = el.value;
+  });
+  const btn = $("save-btn"); btn.disabled = true; btn.textContent = "保存中…";
+  try{
+    const r = await apiPost("config/save", {values});
+    $("save-tip").innerHTML = `<div class="okbox">✅ 已保存 ${r.count} 项配置（日报推送等需要重载插件的项除外）。</div>`;
+    toast("配置已保存");
+    clearDirty();
+  }catch(e){
+    $("save-tip").innerHTML = `<div class="errbox">${esc(e.message||e)}</div>`;
+  }
+  btn.disabled = false; btn.textContent = "保存配置";
+  setTimeout(()=>{ const t=$("save-tip"); if(t) t.innerHTML=""; }, 4000);
+}
+
+/* ---------------- 启动 ---------------- */
+function showStandalone(){
+  // 直接打开（不经 AstrBot 仪表盘 iframe）时没有官方桥接：给出引导页，而不是一片空屏
+  $("loading").classList.add("hidden");
+  document.querySelector(".header").classList.add("hidden");
+  $("page-status").classList.add("hidden");
+  $("page-config").classList.add("hidden");
+  $("standalone").classList.remove("hidden");
+}
+(async function init(){
+  try{
+    // 等 dashboard 注入桥接（最多 3 秒）
+    for (let i = 0; i < 30 && !getBridge(); i++) await new Promise(r=>setTimeout(r,100));
+    if (!getBridge()){
+      showStandalone();
+      return;
+    }
+    // 设置页控件变动 → 脏检测（开关点按、下拉选择、输入框输入都算）
+    $("config-cards").addEventListener("input", markDirty);
+    $("config-cards").addEventListener("change", markDirty);
+    $("config-cards").addEventListener("click", (e)=>{ if (e.target.closest(".switch")) markDirty(); });
+    await Promise.all([loadOverview(), loadConfig()]);
+    $("loading").classList.add("hidden");
+  }catch(e){ showErr(e); }
+  // 概览页每 30 秒静默刷新（仅页面可见时），冷处理到期/新申诉不用手动刷新
+  setInterval(()=>{
+    if (document.visibilityState === "visible" && !$("page-status").classList.contains("hidden")) loadOverview();
+  }, 30000);
+})();
+</script>
+</body>
+</html>

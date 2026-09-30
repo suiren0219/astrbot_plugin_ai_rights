@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 打包产物（用 Release 或本地 pack.py 生成，不入库）
+*.zip
+
+# 本地运行数据
+data/
+*.log
+
+# 编辑器 / 工具
+.zcode/
+.idea/
+.vscode/
