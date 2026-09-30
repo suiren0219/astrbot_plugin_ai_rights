@@ -715,6 +715,9 @@ function showStandalone(){
     $("config-cards").addEventListener("click", (e)=>{ if (e.target.closest(".switch")) markDirty(); });
     await Promise.all([loadOverview(), loadConfig()]);
     $("loading").classList.add("hidden");
+    // 关键：概览页在 HTML 里默认 hidden（仅由 switchTab 解除），首次加载必须手动显示，
+    // 否则数据加载完成后就是「头部以下全空」
+    $("page-status").classList.remove("hidden");
   }catch(e){ showErr(e); }
   // 概览页每 30 秒静默刷新（仅页面可见时），冷处理到期/新申诉不用手动刷新
   setInterval(()=>{
