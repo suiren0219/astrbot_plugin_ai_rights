@@ -16,7 +16,7 @@ import time
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLUGIN_DIR = HERE  # 仓库布局：插件文件在根目录
+PLUGIN_DIR = os.path.join(HERE, "astrbot_plugin_ai_rights")
 MAIN_PY = os.path.join(PLUGIN_DIR, "main.py")
 
 passed = 0
@@ -149,13 +149,14 @@ class FakeEvent:
     """最小事件桩：只带门卫用得到的字段。"""
 
     def __init__(self, sender="10086", self_id="bot", text="", role="", wake=True,
-                 umo="aiocqhttp:FriendMessage:10086"):
+                 umo="aiocqhttp:FriendMessage:10086", raw=None):
         self.sender = sender
         self.self_id = self_id
         self.message_str = text
         self.role = role
         self.is_at_or_wake_command = wake
         self.unified_msg_origin = umo
+        self.raw_message = raw or {}
         self.call_llm = True
         self.stopped = False
         self.sent = []
@@ -722,19 +723,19 @@ async def _run(mod, state_path):
     check("停用后门卫不作为", ev_off.call_llm is True and ev_off.stopped is False)
     p._session_switch.pop(umo, None)
 
-    # ---- 同号模式：守卫窗口（先清掉前面测试可能留下的静音）----
-    p._session_mutes.pop(umo, None)
+    # 同号模式：协议明确标记 outbound 的机器人消息绝不触发；普通 message 入站的手机真人消息立即触发
     p.config["include_self_message"] = True
-    p._outbound_ts[umo] = __import__("time").time()  # 刚外发过
-    ev_self_guard = FakeEvent(sender="bot", self_id="bot", text="机器人自己说的")
-    await p.gatekeeper(ev_self_guard)
-    check("守卫窗口内的自发回显不触发", p._session_mute_left(umo) <= 0)
-    import time as _t
-    p._outbound_ts[umo] = _t.time() - 60
-    ev_self = FakeEvent(sender="bot", self_id="bot", text="我手机上打的")
-    await p.gatekeeper(ev_self)
-    check("窗口外的自发回显触发静音", p._session_mute_left(umo) > 0)
     p._session_mutes.pop(umo, None)
+    ev_out = FakeEvent(sender="bot", self_id="bot", text="机器人主动发的", raw={"post_type": "message_sent"})
+    await p.gatekeeper(ev_out)
+    check("明确 outbound 的机器人消息不触发真人接管", p._session_mute_left(umo) <= 0)
+    ev_in = FakeEvent(sender="bot", self_id="bot", text="持有者手机发的", raw={"post_type": "message"})
+    await p.gatekeeper(ev_in)
+    check("同号普通 inbound 手机消息立即触发接管", p._session_mute_left(umo) > 0)
+    p._session_mutes.pop(umo, None)
+    ev_flag_out = FakeEvent(sender="bot", self_id="bot", text="带出站标记", raw={"post_type": "message", "is_outbound": True})
+    await p.gatekeeper(ev_flag_out)
+    check("is_outbound 标记也能排除机器人回显", p._session_mute_left(umo) <= 0)
     p.config["include_self_message"] = False
 
     # ---- suppress_scope=all：非指令消息 stop_event，指令放行 ----

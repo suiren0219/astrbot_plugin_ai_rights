@@ -159,9 +159,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.5.2")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.6.0")
 class AIRightsPlugin(Star):
-    version = "v2.5.2"
+    version = "v2.6.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -279,6 +279,63 @@ class AIRightsPlugin(Star):
     # ------------------------------------------------------------------
     # 真人接管
     # ------------------------------------------------------------------
+    @staticmethod
+    def _payload_field(owner, name: str):
+        if owner is None:
+            return None
+        if isinstance(owner, dict):
+            return owner.get(name)
+        return getattr(owner, name, None)
+
+    @staticmethod
+    def _truthy_marker(value) -> bool:
+        if value is True:
+            return True
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value == 1
+        return str(value or "").strip().lower() in {
+            "1", "true", "yes", "on", "self", "outbound", "outgoing", "sent"
+        }
+
+    def _self_message_direction(self, event: AstrMessageEvent) -> str:
+        """识别同号消息方向：inbound=手机真人入站，outbound=机器人发送回显，unknown=协议没标记。
+
+        OneBot/NapCat 等实现的字段并不完全一致，所以同时看 raw_message、message_obj、event：
+        post_type=message_sent、is_self/from_self/is_outbound/is_sent、direction/status 都视为出站。
+        普通 post_type=message 且没有出站标记，才可能是手机端上报的真人消息。
+        """
+        raw = {}
+        message_obj = getattr(event, "message_obj", None)
+        for owner in (message_obj, event):
+            candidate = self._payload_field(owner, "raw_message")
+            if isinstance(candidate, dict):
+                raw.update(candidate)
+            elif isinstance(owner, dict) and any(
+                key in owner for key in (
+                    "post_type", "message_type", "is_self", "from_self", "is_outbound",
+                    "outbound", "is_sent", "direction", "message_direction", "status",
+                )
+            ):
+                raw.update(owner)
+
+        owners = (raw, event, message_obj)
+        post_type = str(raw.get("post_type") or "").strip().lower()
+        if post_type in {"message_sent", "outbound", "outgoing", "send", "sent"}:
+            return "outbound"
+        for owner in owners:
+            if any(self._truthy_marker(self._payload_field(owner, name)) for name in (
+                "is_outbound", "outbound", "is_sent", "from_self"
+            )):
+                return "outbound"
+            for name in ("direction", "message_direction", "event_direction", "flow", "status", "message_status"):
+                value = str(self._payload_field(owner, name) or "").strip().lower()
+                if value in {"outbound", "outgoing", "send", "sent", "sending", "egress", "output", "delivered"}:
+                    return "outbound"
+        # 明确是普通入站 message，且协议没有出站标记：同号模式下视为手机端真人消息。
+        if post_type in {"", "message"}:
+            return "inbound"
+        return "unknown"
+
     def _is_real_person_event(self, event: AstrMessageEvent, umo: str, sender: str, self_id: str, text: str) -> bool:
         # 指令不算真人闲聊：/真人解除 之类的消息不该把自己再次静音
         if text and any(text.startswith(p) for p in self._ignore_prefixes()):
@@ -286,13 +343,20 @@ class AIRightsPlugin(Star):
         ids = self._real_person_ids()
         if sender and sender in ids and sender != self_id:
             return True
-        if self._cfg_get("include_self_message", False) and self_id and sender == self_id:
-            # 同号模式：排除机器人自己刚发出去的消息回显
-            guard = max(1.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
-            if time.time() - self._outbound_ts.get(umo, 0.0) <= guard:
-                return False
+        if not self._cfg_get("include_self_message", False) or not self_id or sender != self_id:
+            return False
+
+        direction = self._self_message_direction(event)
+        if direction == "outbound":
+            # 机器人主动发送/平台 message_sent 回执绝不能把机器人自己再次静音。
+            return False
+        if direction == "inbound":
+            # 同一个 QQ 账号从手机端发来的普通入站消息：立即进入真人接管。
             return True
-        return False
+
+        # 旧协议完全不带方向字段时保留旧守卫，避免机器人回显误触发。
+        guard = max(1.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
+        return time.time() - self._outbound_ts.get(umo, 0.0) > guard
 
     def _trigger_session_mute(self, umo: str) -> bool:
         """真人发言 → 静音/续期。返回是否为「新一次静音开始」。"""

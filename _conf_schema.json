@@ -24,13 +24,13 @@
     "description": "同号模式：机器人登的就是你本人的 QQ 号",
     "type": "bool",
     "default": false,
-    "hint": "机器人与你共用同一个 QQ 号时开启：你手机上发出的消息（自发消息回显）同样触发静音。需要协议端（NapCat/Lagrange 等）开启「上报自身消息 / reportSelfMessage」。机器人自己外发消息的回显会被 guard 窗口自动排除，不会误触发。"
+    "hint": "同号模式：机器人和持有者使用同一个 QQ 号时开启。协议端需要上报自身消息（reportSelfMessage）。插件优先读取 raw_message 的 post_type/message_sent、is_outbound/direction 等方向字段：普通 message 入站视为手机真人发言，message_sent/outbound 视为机器人回显，不会把机器人自己发的消息误判成真人。只有协议完全不带方向字段时才使用 self_echo_guard_seconds 兜底。"
   },
   "self_echo_guard_seconds": {
     "description": "自发回显守卫窗口（秒）",
     "type": "int",
     "default": 15,
-    "hint": "同号模式下，机器人刚发过消息后的这段短时间内到达的自身回显，视为机器人自己说的，不触发静音。你手速特别快时可以调小。"
+    "hint": "协议完全不带方向字段时的保守兜底窗口：机器人刚发消息后的这段时间内到达的同号回显视为机器人自己说的，不触发真人接管。只要协议提供 post_type/message_sent 或 is_outbound/direction，插件会优先按方向字段判断，不依赖这个窗口。"
   },
   "mute_minutes": {
     "description": "真人接管静音时长（分钟）",
