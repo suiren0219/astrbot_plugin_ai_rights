@@ -775,7 +775,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v2.5", meta is not None and "v2.5" in meta[3])
+        check("@register 版本号是 v2.6", meta is not None and "v2.6" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
