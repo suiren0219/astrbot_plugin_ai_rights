@@ -16,7 +16,7 @@ import time
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLUGIN_DIR = os.path.join(HERE, "astrbot_plugin_ai_rights")
+PLUGIN_DIR = HERE  # 仓库布局：插件文件在根目录
 MAIN_PY = os.path.join(PLUGIN_DIR, "main.py")
 
 passed = 0
