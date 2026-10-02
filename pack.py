@@ -13,7 +13,7 @@ import os
 import zipfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PLUGIN_DIR = ROOT  # 仓库布局：插件文件在根目录
+PLUGIN_DIR = os.path.join(ROOT, "astrbot_plugin_ai_rights")
 PLUGIN_ZIP = os.path.join(ROOT, "astrbot_plugin_ai_rights.zip")
 
 EXCLUDE_DIRS = {"__pycache__", ".git", ".venv", "venv"}
