@@ -63,17 +63,21 @@
   .iconbtn.spinning{animation:sp .9s linear infinite}
   /* ---------- 卡片 ---------- */
   .card{background:var(--card);border-radius:var(--radius);padding:clamp(14px,2.2vw,18px);margin-top:14px;box-shadow:var(--shadow)}
-  .card h2{font-size:16px;margin:0 0 2px;display:flex;align-items:center;gap:10px;font-weight:600}
-  .icon-chip{flex:none;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff}
-  .icon-chip svg{width:16px;height:16px}
-  /* Google Settings 式纯色圆（Material 色） */
-  .g1{background:#1a73e8}
-  .g2{background:#e37400}
-  .g3{background:#12a4af}
-  .g4{background:#188038}
-  .g5{background:#d93025}
-  .g6{background:#f29900}
-  .g7{background:#9334e6}
+  .card h2{font-size:16px;margin:0 0 2px;display:flex;align-items:center;gap:11px;font-weight:500}
+  /* Material 3 tonal 图标容器：淡色底 + 同色系图标（Gmail 设置区质感） */
+  .icon-chip{flex:none;width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center}
+  .icon-chip svg{width:17px;height:17px}
+  .g1{background:rgba(26,115,232,.12);color:#1a73e8}
+  .g2{background:rgba(224,152,0,.14);color:#a56300}
+  .g3{background:rgba(18,164,175,.12);color:#0e8a94}
+  .g4{background:rgba(24,128,56,.12);color:#188038}
+  .g5{background:rgba(217,48,37,.11);color:#d93025}
+  .g6{background:rgba(242,153,0,.14);color:#a56300}
+  .g7{background:rgba(147,52,230,.11);color:#9334e6}
+  @media (prefers-color-scheme: dark){
+    .g1{color:#8ab4f8}.g2{color:#fcad3e}.g3{color:#4dd0cd}.g4{color:#81c995}
+    .g5{color:#f28b82}.g6{color:#fcad3e}.g7{color:#c58af9}
+  }
   .card .desc{color:var(--sub);font-size:12px;margin:4px 0 12px}
   /* ---------- 统计 ---------- */
   .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
