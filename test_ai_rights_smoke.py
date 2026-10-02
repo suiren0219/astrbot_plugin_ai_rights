@@ -229,21 +229,42 @@ class FakeProv:
         return types.SimpleNamespace(completion_text=self._model_or_reply)
 
 
+class FakeBot:
+    """aiocqhttp 事件总线桩：记录订阅，测试直接调用处理器。"""
+
+    def __init__(self):
+        self.subs = {}
+
+    def subscribe(self, event_name, func):
+        self.subs.setdefault(event_name, []).append(func)
+
+    def unsubscribe(self, event_name, func):
+        if func in self.subs.get(event_name, []):
+            self.subs[event_name].remove(func)
+
+
 class FakeWebContext(FakeContext):
     """带 register_web_api 和 provider_manager 的 Context 桩（WebUI 面板用）。"""
 
-    def __init__(self, provs=None, using=None):
+    def __init__(self, provs=None, using=None, bot=None):
         super().__init__()
         self._provs = provs or {}
         self.provider_manager = types.SimpleNamespace(inst_map=dict(self._provs))
         self._using = using
         self.routes = []
+        self._bot = bot
+        self._platform = types.SimpleNamespace(bot=bot) if bot is not None else None
 
     def register_web_api(self, route, handler, methods, desc):
         self.routes.append((route, handler, tuple(methods), desc))
 
     def get_using_provider(self):
         return self._using
+
+    def get_platform_inst(self, name):
+        if self._platform is None:
+            raise RuntimeError(f"no platform {name}")
+        return self._platform
 
 
 def _load_plugin(state_path):
@@ -636,6 +657,47 @@ async def _run_v5(mod, state_path):
     check("群名单重启恢复", p2._scope_whitelist == {"777888"})
 
 
+async def _run_v6(mod, state_path):
+    """v2.7 同号接管：aiocqhttp 总线订阅 message_sent，手机真人消息立即接管、机器人回显不触发。"""
+    mod.STATE_PATH = state_path
+    bot = FakeBot()
+    ctx = FakeWebContext(bot=bot)
+    cfg = {"real_person_ids": "", "persist_state": True, "include_self_message": True}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    check("message_sent 总线已订阅", "message_sent" in bot.subs and len(bot.subs["message_sent"]) == 1)
+    handler = bot.subs["message_sent"][0]
+    umo = "aiocqhttp:GroupMessage:933001"
+
+    # 手机端持有者消息（同号入站，无出站标记）→ 立即接管
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "我来接管一下"})
+    check("同号手机消息触发会话接管", p._session_mute_left(umo) > 0)
+    # 私聊同号消息同样接管
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "raw_message": "私聊也接管"})
+    check("同号手机私聊消息触发接管", p._session_mute_left("aiocqhttp:FriendMessage:123456") > 0)
+    # 守卫窗口内到达的（机器人 API 发送回显）不触发
+    import time as _t
+    p._outbound_ts[umo] = _t.time()
+    p._session_mutes.pop(umo, None)
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "回显"})
+    check("守卫窗口内的机器人回显不触发", p._session_mute_left(umo) == 0)
+    # 关闭开关后总线处理器静默
+    p.config["include_self_message"] = False
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "开关关了"})
+    check("开关关闭后不触发接管", p._session_mute_left(umo) == 0)
+    p.config["include_self_message"] = True
+    # 非同号消息（他人消息混入 message_sent，理论上不会发生）不接管
+    await handler({"self_id": 123456, "user_id": 654321, "group_id": 933001, "raw_message": "别人的消息"})
+    check("非同号消息不触发接管", p._session_mute_left(umo) == 0)
+    # 畸形事件不炸
+    await handler({})
+    await handler(None)
+    check("畸形事件安全通过", True)
+    # terminate 退订
+    await p.terminate()
+    check("terminate 已退订总线", "message_sent" in bot.subs and len(bot.subs["message_sent"]) == 0)
+
+
 async def _run(mod, state_path):
     cfg = {
         "real_person_ids": "10086\n20002",
@@ -775,7 +837,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v2.6", meta is not None and "v2.6" in meta[3])
+        check("@register 版本号是 v2.7", meta is not None and "v2.7" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -810,6 +872,9 @@ def main():
 
         print("== 驱动作用范围（v2.4 群白/黑名单）==")
         asyncio.run(_run_v5(mod, os.path.join(os.path.dirname(state_path), "state_v5.json")))
+
+        print("== 驱动同号接管（v2.7 message_sent 总线）==")
+        asyncio.run(_run_v6(mod, os.path.join(os.path.dirname(state_path), "state_v6.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

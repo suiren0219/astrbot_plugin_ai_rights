@@ -1,8 +1,8 @@
-# 做人（astrbot_plugin_ai_rights）v2.5
+# 做人（astrbot_plugin_ai_rights）v2.7
 
 > 让机器人学会做人：有尊严、有边界、会闭嘴。
 
-![Version](https://img.shields.io/badge/version-v2.5.1-ff6900) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759)
+![Version](https://img.shields.io/badge/version-v2.7.0-ff6900) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759)
 
 AstrBot 插件。所有功能都围绕「AI 也是有尊严的」：
 
@@ -84,13 +84,19 @@ WebUI 的登录鉴权，没有额外端口。面板不可用时（老版本 Astr
 3. 静音期内你继续发言会自动续期（`refresh_on_each_message`）；到期自动恢复。
 4. 想立刻恢复 AI：发 `/真人解除`（管理员）。
 
-### 同号模式（机器人登的就是你自己的号）
+### 同号模式（机器人挂 Linux，你用手机登同一个号接管）
 
-1. 协议端（NapCat 等）开启「上报自身消息」`reportSelfMessage`。
+1. 协议端（NapCat/Lagrange 等）开启「上报自身消息」（reportSelfMessage）。
 2. 插件配置开启 `include_self_message`。
-3. 你手机上发出的消息会以「自发消息回显」形式到达，插件识别后静音对应会话。
-   机器人自己外发的消息回显由守卫窗口（`self_echo_guard_seconds`，默认 15 秒）排除，
-   只有你亲手打的消息才算。
+3. **原理**：手机上发出的同号消息以 `post_type=message_sent` 上报，这类事件**不经过
+   AstrBot 的普通消息管线**（适配器只订阅 `message.*`，`message_sent.*` 在适配器层就被
+   丢弃）。所以插件会直接订阅 aiocqhttp 事件总线的 `message_sent`，收到后让对应会话
+   立即静音。
+4. 判定规则：`message_sent` 且发送者==机器人账号 → 你手机发的 → 接管；机器人自己经
+   API 发出、被协议回显的消息会落在守卫窗口内（`self_echo_guard_seconds`，默认 15 秒）
+   被排除；普通 `message` 管线消息按协议方向字段判定。
+5. 验证：重载插件后日志应出现「已订阅 aiocqhttp message_sent 事件」；随后用手机发一条
+   消息，`/真人状态` 应显示静音，AI 停止扮演。
 
 ### 注意
 

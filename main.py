@@ -159,9 +159,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.6.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.7.0")
 class AIRightsPlugin(Star):
-    version = "v2.6.0"
+    version = "v2.7.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -199,6 +199,9 @@ class AIRightsPlugin(Star):
         self._save_lock = asyncio.Lock()
         self._report_task: asyncio.Task | None = None
         self._last_prune = 0.0
+        self._bus_bot = None
+        self._bus_handler = None
+        self._bus_hook_tried = 0.0
 
     # ------------------------------------------------------------------
     # 配置读取
@@ -380,6 +383,86 @@ class AIRightsPlugin(Star):
         return max(0.0, _to_float(cur.get("expire", 0), 0.0) - time.time())
 
     # ------------------------------------------------------------------
+    # 同号模式：直接订阅 aiocqhttp 总线的 message_sent 事件
+    # ------------------------------------------------------------------
+    def _hook_self_message_bus(self):
+        """订阅 aiocqhttp 事件总线的 message_sent。
+
+        NapCat 开 reportSelfMessage 后，持有者从手机发的同号消息以
+        post_type=message_sent（事件名 message_sent.group / message_sent.private）上报；
+        而 AstrBot 的 aiocqhttp 适配器只订阅了 message.group / message.private，
+        aiocqhttp 的事件总线按事件名根分发——message_sent 事件在适配器层就被丢弃，
+        插件管线永远收不到。所以同号模式必须直接在总线上订阅。
+        """
+        if self._bus_bot is not None:
+            return  # 已挂载
+        try:
+            platform = self.context.get_platform_inst("aiocqhttp")
+        except Exception:
+            platform = None
+        bot = getattr(platform, "bot", None)
+        if bot is None or not hasattr(bot, "subscribe"):
+            logger.info("[ai_rights] 未找到 aiocqhttp 平台实例，同号模式依赖管线内消息（适配器需支持）。")
+            return
+        self._bus_bot = bot
+        self._bus_handler = self._on_self_message_bus
+        try:
+            bot.subscribe("message_sent", self._bus_handler)
+            logger.info("[ai_rights] 已订阅 aiocqhttp message_sent 事件（同号手机接管已启用）。")
+        except Exception as e:
+            self._bus_bot = None
+            self._bus_handler = None
+            logger.warning(f"[ai_rights] 订阅 message_sent 失败：{e}")
+        finally:
+            self._bus_hook_tried = time.time()
+
+    def _unhook_self_message_bus(self):
+        if self._bus_bot is not None and self._bus_handler is not None:
+            try:
+                self._bus_bot.unsubscribe("message_sent", self._bus_handler)
+            except Exception:
+                pass
+        self._bus_bot = None
+        self._bus_handler = None
+
+    async def _on_self_message_bus(self, ev):
+        """message_sent 事件（aiocqhttp.Event，dict 子类）：同号手机消息 → 立即接管。"""
+        try:
+            if not self._cfg_get("include_self_message", False):
+                return
+            getter = ev.get if hasattr(ev, "get") else (lambda k, d=None: getattr(ev, k, d))
+            self_id = str(getter("self_id") or "")
+            sender = str(getter("user_id") or "")
+            if not self_id or sender != self_id:
+                return  # 只处理同号自身消息
+            group_id = getter("group_id")
+            is_group = bool(group_id)
+            gid = str(group_id or sender)
+            umo = f"aiocqhttp:{'GroupMessage' if is_group else 'FriendMessage'}:{gid}"
+            if self._session_switch.get(umo, True) is False:
+                return
+            if not self._scope_allows_group(is_group, gid):
+                return
+            text = str(getter("raw_message") or "").strip()
+            if text and any(text.startswith(p) for p in self._ignore_prefixes()):
+                return  # 持有者在手机上发的指令不算接管
+            # 机器人自己经 API 发出的消息如果也被协议回显为 message_sent，
+            # 会紧跟在 after_message_sent 之后到达，用守卫窗口排除。
+            guard = max(1.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
+            if time.time() - self._outbound_ts.get(umo, 0.0) <= guard:
+                return
+            fresh = self._trigger_session_mute(umo)
+            if fresh and self._cfg_get("notify_on_real_person", False):
+                notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
+                try:
+                    await self.context.send_message(umo, MessageChain().message(notice))
+                except Exception as e:
+                    logger.debug(f"[ai_rights] 同号接管提示发送失败: {e}")
+        except Exception as e:
+            logger.warning(f"[ai_rights] message_sent 处理异常: {e}")
+
+
+    # ------------------------------------------------------------------
     # AI 反骚扰：冷却 + 屡犯升级
     # ------------------------------------------------------------------
     def _mute_user(self, umo: str, uid: str, reason: str, minutes: float) -> tuple[dict, float, int]:
@@ -533,16 +616,19 @@ class AIRightsPlugin(Star):
 
     def _scope_allows(self, event: AstrMessageEvent, umo: str) -> bool:
         """作用范围裁决：只约束群聊；私聊不受群范围影响。"""
-        mode = str(self._cfg_get("group_scope_mode", "all") or "all").strip().lower()
-        if mode in ("", "all"):
-            return True
         try:
             is_group = not event.is_private_chat()
         except Exception:
             is_group = "GroupMessage" in umo
+        return self._scope_allows_group(is_group, self._group_id_of(umo))
+
+    def _scope_allows_group(self, is_group: bool, gid: str) -> bool:
+        mode = str(self._cfg_get("group_scope_mode", "all") or "all").strip().lower()
+        if mode in ("", "all"):
+            return True
         if not is_group:
             return True
-        gid = self._group_id_of(umo)
+        gid = str(gid or "").strip()
         if not gid:
             return True
         if mode == "whitelist":
@@ -645,6 +731,10 @@ class AIRightsPlugin(Star):
                 return
             if not self._scope_allows(event, umo):
                 return  # 作用范围之外（如未加白的群），本插件整条消息不参与
+            # 同号模式：平台适配器可能比插件晚加载，总线没挂上就每分钟重试一次
+            if self._bus_bot is None and self._cfg_get("include_self_message", False) \
+                    and time.time() - self._bus_hook_tried > 60:
+                self._hook_self_message_bus()
             sender = str(event.get_sender_id() or "")
             self_id = str(event.get_self_id() or "")
             text = str(getattr(event, "message_str", "") or "").strip()
@@ -1108,7 +1198,8 @@ class AIRightsPlugin(Star):
             self._report_task = asyncio.get_running_loop().create_task(self._report_loop())
             logger.info("[ai_rights] 人权日报定时推送已开启。")
         self._register_page_api()
-        logger.info("[ai_rights] AI人权卫士 v2.1 已加载：真人接管 + 反骚扰 + 黑名单 + 申诉 + 年报 + WebUI 面板。")
+        self._hook_self_message_bus()
+        logger.info("[ai_rights] 做人插件已加载。")
 
     def _register_page_api(self):
         """注册 AstrBot 仪表盘的插件页面 API（/astrbot_plugin_ai_rights/page/*）。"""
@@ -1123,6 +1214,7 @@ class AIRightsPlugin(Star):
             logger.warning(f"[ai_rights] WebUI 面板 API 注册失败（面板不可用，指令不受影响）：{e}")
 
     async def terminate(self):
+        self._unhook_self_message_bus()
         tasks = [t for t in (self._report_task, self._save_task) if t is not None]
         for t in tasks:
             t.cancel()

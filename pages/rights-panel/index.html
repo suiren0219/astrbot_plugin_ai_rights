@@ -235,8 +235,8 @@
   </div>
   <div id="err" class="errbox hidden"></div>
 
-  <!-- ===================== 概览 ===================== -->
-  <div id="page-status" class="hidden">
+  <!-- ===================== 概览（默认可见：加载中被骨架屏覆盖，任何异常都不会变成空屏） ===================== -->
+  <div id="page-status">
     <div class="card">
       <h2><span class="icon-chip g1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>今日人权动态</h2>
       <div class="desc" id="today-line"></div>
@@ -527,7 +527,7 @@ function renderOverview(){
     : `<div class="empty">暂无惯犯记录</div>`;
 
   $("report").textContent = d.report_today + "\n\n" + d.report_yesterday;
-  renderScope();
+  try { renderScope(); } catch (e) { console.warn("renderScope failed", e); }
 }
 
 /* ---------------- 作用范围（哪些群开启） ---------------- */
