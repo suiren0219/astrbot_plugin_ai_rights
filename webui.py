@@ -31,6 +31,7 @@ from typing import Any
 from quart import request
 
 from astrbot.api import logger
+from astrbot.api.event import MessageChain
 
 PLUGIN_NAME = "astrbot_plugin_ai_rights"
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/page"
@@ -144,6 +145,7 @@ class PageApi:
             ("/scope/set", self.scope_set, ["POST"], "AI人权面板：作用范围模式"),
             ("/scope/list", self.scope_list, ["POST"], "AI人权面板：群白/黑名单增删"),
             ("/appeal/decide", self.appeal_decide, ["POST"], "AI人权面板：审批申诉"),
+            ("/report/push", self.report_push, ["POST"], "AI人权面板：立即推送年报预览"),
         ]
 
     def register(self) -> int:
@@ -383,6 +385,19 @@ class PageApi:
         if not ok:
             return _error(msg)
         return _ok({"id": aid, "approved": approve, "uid": (target or {}).get("uid"), "message": msg})
+
+    async def report_push(self) -> dict:
+        """把今天+昨天的年报立即推送到 daily_report_origin，用于验证定时推送链路。"""
+        p = self.plugin
+        origin = str(p._cfg_get("daily_report_origin", "") or "").strip()
+        if not origin:
+            return _error("未配置 daily_report_origin，请先在设置里填写推送目标会话")
+        text = p._report_text(0) + "\n\n" + p._report_text(1)
+        try:
+            await p.context.send_message(origin, MessageChain().message(text))
+        except Exception as e:
+            return _error(f"推送失败：{e}")
+        return _ok({"origin": origin})
 
     async def scope_set(self) -> dict:
         p = self.plugin

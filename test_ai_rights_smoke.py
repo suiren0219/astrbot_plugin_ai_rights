@@ -413,7 +413,7 @@ async def _run_webui(mod, state_path):
                "insult_enabled": True, "anti_harass_enabled": True})
     p = mod.AIRightsPlugin(ctx, cfg)
     await p.initialize()
-    check("面板 API 已注册（12 个端点）", p.page_api_registered and len(ctx.routes) == 12)
+    check("面板 API 已注册（13 个端点）", p.page_api_registered and len(ctx.routes) == 13)
     routes = {r[0]: r for r in ctx.routes}
     prefix = "/astrbot_plugin_ai_rights/page/"
     check("路由前缀符合官方插件页面规范", prefix + "overview" in routes and prefix + "config/save" in routes)
@@ -698,6 +698,50 @@ async def _run_v6(mod, state_path):
     check("terminate 已退订总线", "message_sent" in bot.subs and len(bot.subs["message_sent"]) == 0)
 
 
+async def _run_v7(mod, state_path):
+    """v2.8：帮助速查、版本对比、年报预览推送、全新安装标记。"""
+    mod.STATE_PATH = state_path
+    quart_req = sys.modules["quart"].request
+    ctx = FakeWebContext()
+    cfg = {"persist_state": True, "real_person_ids": "10086", "update_check_enabled": True}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    check("启用时创建更新检查任务", p._update_task is not None)
+
+    # 全新安装标记（state 文件不存在时 initialize 置位）
+    check("全新安装标记置位", p._fresh_install is True)
+
+    # /AI人权 帮助
+    ev_help = FakeEvent(sender="10086", text="AI人权 帮助", wake=True)
+    res = [r async for r in p.ai_rights_overview(ev_help, "帮助")]
+    check("/AI人权 帮助 输出速查", any("指令速查" in r.text for r in res))
+    ev_st = FakeEvent(sender="10086", text="AI人权", wake=True)
+    res2 = [r async for r in p.ai_rights_overview(ev_st, "")]
+    check("不带参数仍输出总览", any("人权状况" in r.text for r in res2))
+
+    # 版本对比
+    vn = p._version_newer
+    check("版本对比：新版本成立", vn("2.8.0", "2.7.2") and vn("3.0", "2.9.9") and vn("v2.8.1", "2.8"))
+    check("版本对比：相同/旧版本不成立", not vn("2.7.2", "2.7.2") and not vn("2.6.0", "2.7.2"))
+
+    # 年报预览推送
+    routes = {r[0]: r for r in ctx.routes}
+    quart_req.payload = {}
+    res_bad = await routes["/astrbot_plugin_ai_rights/page/report/push"][1]()
+    check("未配置日报会话时报错信封", res_bad["success"] is False)
+    p.config["daily_report_origin"] = "aiocqhttp:GroupMessage:933001"
+    res_ok = await routes["/astrbot_plugin_ai_rights/page/report/push"][1]()
+    check("年报预览推送成功", res_ok["success"] and any("年报" in t or "人权" in t for _, t in ctx.sent))
+
+    # 升级检查开关关闭 → 不创建任务
+    cfg2 = {"persist_state": True, "update_check_enabled": False}
+    p2 = mod.AIRightsPlugin(FakeWebContext(), cfg2)
+    await p2.initialize()
+    check("关闭检查更新则不建任务", p2._update_task is None)
+    await p2.terminate()
+    await p.terminate()
+
+
 async def _run(mod, state_path):
     cfg = {
         "real_person_ids": "10086\n20002",
@@ -837,7 +881,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v2.7", meta is not None and "v2.7" in meta[3])
+        check("@register 版本号是 v2.8", meta is not None and "v2.8" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -875,6 +919,9 @@ def main():
 
         print("== 驱动同号接管（v2.7 message_sent 总线）==")
         asyncio.run(_run_v6(mod, os.path.join(os.path.dirname(state_path), "state_v6.json")))
+
+        print("== 驱动引导与更新检查（v2.8）==")
+        asyncio.run(_run_v7(mod, os.path.join(os.path.dirname(state_path), "state_v7.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

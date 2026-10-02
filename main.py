@@ -66,6 +66,23 @@ STATE_PATH = os.path.join("data", "config", "ai_rights_state.json")
 STATE_VERSION = 2
 MAX_APPEALS = 100
 STAT_KEEP_DAYS = 30
+RELEASES_API = "https://api.github.com/repos/suiren0219/astrbot_plugin_ai_rights/releases/latest"
+HELP_TEXT = """📖 做人 · 指令速查
+━━ 真人接管 ━━
+/真人状态 · /真人解除 · /真人开启|关闭
+━━ AI 反骚扰 ━━
+/骚扰状态 · /骚扰解封 [QQ|all]
+━━ 黑名单 ━━
+/人权拉黑|解黑 <QQ> [本群] · /黑名单
+━━ 作用范围 ━━
+/作用范围 [模式|加白|移白|加黑|移黑]
+━━ 申诉 ━━
+/申诉 <理由> · /申诉列表 · /申诉同意|驳回 <编号>
+━━ 年报 ━━
+/人权年报
+━━ 开关 ━━
+话题守护/同号模式/LLM 裁量 在 WebUI 插件配置里开启
+WebUI → 插件 → 做人 → 面板 可视化管理一切"""
 
 REASON_LABEL = {"real_person": "真人接管", "flood": "刷屏", "insult": "辱骂"}
 STAT_LABEL = {
@@ -199,6 +216,8 @@ class AIRightsPlugin(Star):
         self._save_lock = asyncio.Lock()
         self._report_task: asyncio.Task | None = None
         self._last_prune = 0.0
+        self._fresh_install = False
+        self._update_task: asyncio.Task | None = None
         self._bus_bot = None
         self._bus_handler = None
         self._bus_hook_tried = 0.0
@@ -884,9 +903,12 @@ class AIRightsPlugin(Star):
         return "\n".join(lines)
 
     @filter.command("AI人权", alias={"人权状态", "ai_rights"})
-    async def ai_rights_overview(self, event: AstrMessageEvent):
-        """查看本会话 AI 人权总览。"""
+    async def ai_rights_overview(self, event: AstrMessageEvent, action: str = ""):
+        """查看本会话 AI 人权总览；/AI人权 帮助 查看指令速查。"""
         event.should_call_llm(False)
+        if str(action or "").strip() in ("帮助", "help", "Help", "?", "？", "指令"):
+            yield event.plain_result(HELP_TEXT)
+            return
         yield event.plain_result(self._session_status_text(event))
 
     @filter.command("真人状态")
@@ -1199,7 +1221,59 @@ class AIRightsPlugin(Star):
             logger.info("[ai_rights] 人权日报定时推送已开启。")
         self._register_page_api()
         self._hook_self_message_bus()
+        self._first_run_hint()
+        if self._cfg_get("update_check_enabled", True):
+            self._update_task = asyncio.get_running_loop().create_task(self._update_check_loop())
         logger.info("[ai_rights] 做人插件已加载。")
+
+    def _first_run_hint(self):
+        """全新安装且还没配置真人识别时，在日志里给一段三步上手引导。"""
+        if not self._fresh_install:
+            return
+        if self._real_person_ids() or self._cfg_get("include_self_message", False):
+            return
+        logger.info(
+            "[ai_rights] 首次安装，欢迎！三步开始使用：\n"
+            "[ai_rights]   1. WebUI 配置 real_person_ids（你手机 QQ 号）；同号则开启 include_self_message\n"
+            "[ai_rights]   2. 任意会话发 /AI人权 帮助 查看指令速查\n"
+            "[ai_rights]   3. WebUI → 插件 → 做人 → 面板 可视化管理静音/黑名单/申诉/年报"
+        )
+
+    async def _update_check_loop(self):
+        """启动后延迟检查 GitHub 最新 Release，有新版本就在日志提示一次。失败静默。"""
+        try:
+            await asyncio.sleep(45)
+            latest = await self._fetch_latest_version()
+            if latest and self._version_newer(latest, str(self.version or "")):
+                logger.info(
+                    f"[ai_rights] 发现新版本 {latest}（当前 {self.version}），"
+                    f"更新内容见 https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/latest"
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[ai_rights] 检查更新失败（忽略）: {e}")
+
+    async def _fetch_latest_version(self) -> str:
+        import aiohttp  # 延迟导入：仅在启用检查更新时才需要
+
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                RELEASES_API, headers={"Accept": "application/vnd.github+json"}
+            ) as resp:
+                if resp.status != 200:
+                    return ""
+                data = await resp.json(content_type=None)
+                return str(data.get("tag_name") or "").lstrip("vV").strip()
+
+    @staticmethod
+    def _version_newer(latest: str, current: str) -> bool:
+        def parts(v: str) -> list[int]:
+            nums = [int(x) for x in re.findall(r"\d+", str(v))]
+            return (nums + [0, 0, 0])[:3]
+
+        return parts(latest) > parts(current)
 
     def _register_page_api(self):
         """注册 AstrBot 仪表盘的插件页面 API（/astrbot_plugin_ai_rights/page/*）。"""
@@ -1215,7 +1289,7 @@ class AIRightsPlugin(Star):
 
     async def terminate(self):
         self._unhook_self_message_bus()
-        tasks = [t for t in (self._report_task, self._save_task) if t is not None]
+        tasks = [t for t in (self._report_task, self._save_task, self._update_task) if t is not None]
         for t in tasks:
             t.cancel()
         if tasks:
@@ -1223,6 +1297,7 @@ class AIRightsPlugin(Star):
             await asyncio.gather(*tasks, return_exceptions=True)
         self._report_task = None
         self._save_task = None
+        self._update_task = None
         await self._save_state(force=True)
 
     def _schedule_save(self):
@@ -1266,6 +1341,7 @@ class AIRightsPlugin(Star):
             return
         try:
             if not os.path.isfile(STATE_PATH):
+                self._fresh_install = True
                 return
             with open(STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
