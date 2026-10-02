@@ -2,7 +2,7 @@
 
 > 让机器人学会做人：有尊严、有边界、会闭嘴。
 
-![Version](https://img.shields.io/badge/version-v2.7.2-ff6900) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759) [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-5f6368)](CHANGELOG.md)
+![Version](https://img.shields.io/badge/version-v2.8.0-ff6900) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759) [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-5f6368)](CHANGELOG.md)
 
 AstrBot 插件。所有功能都围绕「AI 也是有尊严的」：
 
@@ -163,5 +163,8 @@ WebUI 的登录鉴权，没有额外端口。面板不可用时（老版本 Astr
 
 ## 安装
 
-把 `astrbot_plugin_ai_rights` 文件夹放进 AstrBot 的 `data/plugins/` 后在 WebUI 里加载。
+方式一（推荐）：Release 下载 zip 解压后，在解压目录运行 `python install.py [AstrBot 根目录]`，
+自动探测并安装（旧版本自动备份）。
+
+方式二：把 `astrbot_plugin_ai_rights` 文件夹放进 AstrBot 的 `data/plugins/` 后在 WebUI 里加载。
 LLM 裁量模式需要 AstrBot 至少配置了一个对话提供商。

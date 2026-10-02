@@ -3,6 +3,16 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [2.8.0] - 2026-10-02
+
+### 新增
+- **install.py 一键安装**：自动探测本机 AstrBot 根目录，旧版本自动备份，复制插件文件；纯标准库
+- **更新检查**：启动后读取 GitHub Releases 最新版本号，有更新在日志提示一次
+  （`update_check_enabled` 可关闭；访问失败静默跳过，不上传任何数据）
+- **首次安装引导**：全新安装且未配置真人识别时，日志输出三步上手指引
+- **/AI人权 帮助**：输出指令速查
+- **年报预览推送**：面板年报卡新增「预览推送到日报会话」按钮，验证定时推送链路（新端点 `/report/push`）
+
 ## [2.7.2] - 2026-10-02
 
 ### 风格
@@ -118,6 +128,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
-[2.7.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.2
+[2.8.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.0
+[2.7.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.0
 [2.7.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.1
 [2.7.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.0
