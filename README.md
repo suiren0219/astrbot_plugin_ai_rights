@@ -2,7 +2,7 @@
 
 > 让机器人学会做人：有尊严、有边界、会闭嘴。
 
-![Version](https://img.shields.io/badge/version-v2.8.0-ff6900) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759) [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-5f6368)](CHANGELOG.md)
+![Version](https://img.shields.io/badge/version-v2.8.1-ff6900) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759) [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-5f6368)](CHANGELOG.md)
 
 AstrBot 插件。所有功能都围绕「AI 也是有尊严的」：
 

@@ -72,6 +72,12 @@
     "default": "llm",
     "hint": "llm=只拦 AI 聊天回复，插件指令照常可用（推荐）。all=整条消息不再向下传播，连插件指令一起拦（解封指令也会被拦，只能去 WebUI 关闭或改配置，慎用）。"
   },
+  "update_check_enabled": {
+    "description": "启动时检查 GitHub 是否有新版本",
+    "type": "bool",
+    "default": true,
+    "hint": "仅读取 releases 最新版本号并在日志提示，不上传任何数据；访问 GitHub 失败时静默跳过。"
+  },
   "persist_state": {
     "description": "静音/冷处理状态落盘（重启不丢）",
     "type": "bool",

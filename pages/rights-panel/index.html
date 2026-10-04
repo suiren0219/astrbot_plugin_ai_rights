@@ -286,6 +286,7 @@
       <h2><span class="icon-chip g7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></span>人权年报</h2>
       <div class="desc">今天与昨天</div>
       <div class="report" id="report"></div>
+      <button class="btn mini" id="push-report" onclick="pushReport()" style="margin-top:10px">📤 预览推送到日报会话</button>
     </div>
   </div>
 
@@ -581,6 +582,7 @@ async function blAdd(){
   const uid = $("bl-uid").value.trim(); if(!uid){ toast("先填 QQ 号"); return; }
   try{ await apiPost("blacklist/set", {uid, add:true, umo:$("bl-scope").value}); $("bl-uid").value=""; toast("已拉黑"); loadOverview(); }catch(e){ toast(e.message||e);}
 }
+async function pushReport(){ try{ await apiPost("report/push", {}); toast("已推送到日报会话，去查看吧"); }catch(e){ toast(e.message||e);} }
 async function blRemoveAt(i){ const row=BLROWS[i]; if(!row) return; try{ await apiPost("blacklist/set", {uid:row.uid, add:false, umo:row.umo}); toast("已移出黑名单"); loadOverview(); }catch(e){ toast(e.message||e);} }
 
 /* ---------------- 设置页：按 schema 分组渲染 ---------------- */
@@ -612,7 +614,7 @@ const GROUPS = [
     ["daily_report_hour","number"],["daily_report_origin","text"],
   ]],
   ["其他", [
-    ["persist_state","switch"],
+    ["persist_state","switch"],["update_check_enabled","switch"],
   ]],
 ];
 

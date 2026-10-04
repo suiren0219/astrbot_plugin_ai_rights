@@ -246,14 +246,20 @@ class FakeBot:
 class FakeWebContext(FakeContext):
     """带 register_web_api 和 provider_manager 的 Context 桩（WebUI 面板用）。"""
 
-    def __init__(self, provs=None, using=None, bot=None):
+    def __init__(self, provs=None, using=None, bot=None, platform_id="qq-official-config"):
         super().__init__()
         self._provs = provs or {}
         self.provider_manager = types.SimpleNamespace(inst_map=dict(self._provs))
         self._using = using
         self.routes = []
         self._bot = bot
-        self._platform = types.SimpleNamespace(bot=bot) if bot is not None else None
+        # 模拟真实 AstrBot：平台实例 id 是用户随便起的名字，绝不是 "aiocqhttp"
+        self._platform = types.SimpleNamespace(
+            bot=bot, meta=lambda: types.SimpleNamespace(id=platform_id, name="aiocqhttp")
+        ) if bot is not None else None
+        self.platform_manager = types.SimpleNamespace(
+            platform_insts=[self._platform] if self._platform is not None else []
+        )
 
     def register_web_api(self, route, handler, methods, desc):
         self.routes.append((route, handler, tuple(methods), desc))
@@ -742,6 +748,43 @@ async def _run_v7(mod, state_path):
     await p.terminate()
 
 
+async def _run_v8(mod, state_path):
+    """v2.8.1：平台实例命名不匹配修复 + 同号接管诊断 + 群聊他人@机器人被拦。"""
+    mod.STATE_PATH = state_path
+    bot = FakeBot()
+    # 平台实例 id 故意叫随便的名字（真实场景就是这样，绝不能靠 "aiocqhttp" 匹配）
+    ctx = FakeWebContext(bot=bot, platform_id="my-napcat-config-1")
+    cfg = {"persist_state": True, "include_self_message": True}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    check("平台实例 id 不叫 aiocqhttp 也能挂上总线", "message_sent" in bot.subs)
+    handler = bot.subs["message_sent"][0]
+    grp = "aiocqhttp:GroupMessage:933001"
+
+    # 真人在群里用手机发消息 → 该群会话静音
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": 933001, "raw_message": "大家好啊"})
+    check("手机真人消息触发群会话静音", p._session_mute_left(grp) > 0)
+
+    # 关键断言：群里别人 @ 机器人（走普通消息管线）→ 同样被静音拦住
+    others = FakeEvent(sender="7002", text="@机器人 帮我算个题", wake=True, umo=grp)
+    await p.gatekeeper(others)
+    check("静音期间别人@机器人也被拦（不再抢答）", others.call_llm is False)
+
+    # 诊断信息正确反映总线状态
+    diag = p._bus_diag_text()
+    check("诊断显示已收事件与接管次数", "收到自身消息事件 1 条" in diag and "触发接管 1 次" in diag)
+
+    # 私聊真人消息同样接管
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": None, "raw_message": "私聊"})
+    check("手机真人私聊触发接管", p._session_mute_left("aiocqhttp:FriendMessage:7001") > 0)
+
+    # 未开启同号模式时诊断提示开启方法
+    p.config["include_self_message"] = False
+    check("未开启时诊断给出开启提示", "未开启" in p._bus_diag_text())
+
+    await p.terminate()
+
+
 async def _run(mod, state_path):
     cfg = {
         "real_person_ids": "10086\n20002",
@@ -922,6 +965,9 @@ def main():
 
         print("== 驱动引导与更新检查（v2.8）==")
         asyncio.run(_run_v7(mod, os.path.join(os.path.dirname(state_path), "state_v7.json")))
+
+        print("== 驱动同号接管修复（v2.8.1 平台命名 + 他人@被拦）==")
+        asyncio.run(_run_v8(mod, os.path.join(os.path.dirname(state_path), "state_v8.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

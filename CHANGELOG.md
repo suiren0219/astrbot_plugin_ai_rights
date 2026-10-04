@@ -3,6 +3,19 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [2.8.1] - 2026-10-02
+
+### 修复
+- **同号接管真凶找到**：前版用 `get_platform_inst("aiocqhttp")` 找平台实例，但该方法按用户在
+  AstrBot 里配置的**平台实例 id** 匹配——只要实例名不叫 "aiocqhttp"，总线订阅从来没挂上过。
+  现在改为遍历所有平台实例、谁提供 `bot.subscribe` 就订阅谁（多实例全部覆盖）
+- `/AI人权` 状态总览新增**同号接管诊断**：显示总线挂载数、收到 message_sent 事件数、触发接管次数；
+  未收到事件时直接提示「请确认 NapCat 开启 reportSelfMessage」，不再靠猜
+
+### 测试
+- 新增「平台实例 id 不叫 aiocqhttp 也能挂上总线」（复现真实配置命名）
+- 新增「静音期间群里别人 @ 机器人也被拦，AI 不再抢答」端到端断言
+
 ## [2.8.0] - 2026-10-02
 
 ### 新增
@@ -128,7 +141,8 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[2.8.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.1
 [2.8.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.0
-[2.7.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.0
+[2.7.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.2
 [2.7.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.1
 [2.7.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.0

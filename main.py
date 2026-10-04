@@ -176,9 +176,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.8.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.8.1")
 class AIRightsPlugin(Star):
-    version = "v2.8.0"
+    version = "v2.8.1"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -221,6 +221,9 @@ class AIRightsPlugin(Star):
         self._bus_bot = None
         self._bus_handler = None
         self._bus_hook_tried = 0.0
+        self._bus_events_seen = 0      # 收到 message_sent 计数（诊断）
+        self._bus_events_takeover = 0   # 其中触发接管的计数
+        self._bus_last_event_ts = 0.0   # 最近一条 message_sent 时间
 
     # ------------------------------------------------------------------
     # 配置读取
@@ -404,6 +407,17 @@ class AIRightsPlugin(Star):
     # ------------------------------------------------------------------
     # 同号模式：直接订阅 aiocqhttp 总线的 message_sent 事件
     # ------------------------------------------------------------------
+    def _iter_platform_insts(self):
+        """列出所有平台适配器实例（优先 context.platform_manager，回退内部属性）。"""
+        pm = getattr(self.context, "platform_manager", None)
+        insts = list(getattr(pm, "platform_insts", []) or []) if pm is not None else []
+        if not insts:
+            for attr in ("platform_insts", "_platform_insts"):
+                insts = list(getattr(self.context, attr, []) or [])
+                if insts:
+                    break
+        return insts
+
     def _hook_self_message_bus(self):
         """订阅 aiocqhttp 事件总线的 message_sent。
 
@@ -412,35 +426,49 @@ class AIRightsPlugin(Star):
         而 AstrBot 的 aiocqhttp 适配器只订阅了 message.group / message.private，
         aiocqhttp 的事件总线按事件名根分发——message_sent 事件在适配器层就被丢弃，
         插件管线永远收不到。所以同号模式必须直接在总线上订阅。
+
+        注意：不能用 context.get_platform_inst("aiocqhttp")——它按用户在 AstrBot 里
+        配置的平台实例 id 匹配，实例名不叫 "aiocqhttp" 就找不到。这里遍历所有平台实例，
+        谁能提供 bot.subscribe 就订阅谁。
         """
         if self._bus_bot is not None:
             return  # 已挂载
-        try:
-            platform = self.context.get_platform_inst("aiocqhttp")
-        except Exception:
-            platform = None
-        bot = getattr(platform, "bot", None)
-        if bot is None or not hasattr(bot, "subscribe"):
-            logger.info("[ai_rights] 未找到 aiocqhttp 平台实例，同号模式依赖管线内消息（适配器需支持）。")
-            return
-        self._bus_bot = bot
-        self._bus_handler = self._on_self_message_bus
-        try:
-            bot.subscribe("message_sent", self._bus_handler)
-            logger.info("[ai_rights] 已订阅 aiocqhttp message_sent 事件（同号手机接管已启用）。")
-        except Exception as e:
-            self._bus_bot = None
-            self._bus_handler = None
-            logger.warning(f"[ai_rights] 订阅 message_sent 失败：{e}")
-        finally:
-            self._bus_hook_tried = time.time()
+        self._bus_hook_tried = time.time()
+        subs = getattr(self, "_bus_bots", None)
+        if subs is None:
+            subs = []
+            self._bus_bots = subs
+        found = False
+        for platform in self._iter_platform_insts():
+            bot = getattr(platform, "bot", None)
+            if bot is None or not hasattr(bot, "subscribe"):
+                continue
+            try:
+                bot.subscribe("message_sent", self._on_self_message_bus)
+                subs.append(bot)
+                found = True
+            except Exception as e:
+                logger.debug(f"[ai_rights] 订阅 message_sent 失败（跳过该实例）: {e}")
+        if found:
+            self._bus_bot = subs[0]
+            self._bus_handler = self._on_self_message_bus
+            logger.info(
+                f"[ai_rights] 已订阅 message_sent 事件总线 ×{len(subs)}（同号手机接管已启用）。"
+            )
+        else:
+            logger.info(
+                "[ai_rights] 未找到带事件总线的 aiocqhttp 平台实例；"
+                "若你使用同号模式，请确认 AstrBot 版本与协议端（NapCat reportSelfMessage）。"
+            )
 
     def _unhook_self_message_bus(self):
-        if self._bus_bot is not None and self._bus_handler is not None:
+        for bot in getattr(self, "_bus_bots", None) or []:
+            handler = getattr(self, "_bus_handler", None) or self._on_self_message_bus
             try:
-                self._bus_bot.unsubscribe("message_sent", self._bus_handler)
+                bot.unsubscribe("message_sent", handler)
             except Exception:
                 pass
+        self._bus_bots = []
         self._bus_bot = None
         self._bus_handler = None
 
@@ -452,6 +480,12 @@ class AIRightsPlugin(Star):
             getter = ev.get if hasattr(ev, "get") else (lambda k, d=None: getattr(ev, k, d))
             self_id = str(getter("self_id") or "")
             sender = str(getter("user_id") or "")
+            self._bus_events_seen += 1
+            self._bus_last_event_ts = time.time()
+            logger.debug(
+                f"[ai_rights] message_sent 事件：self_id={self_id} user_id={sender} "
+                f"group={getter('group_id')} raw={str(getter('raw_message'))[:40]!r}"
+            )
             if not self_id or sender != self_id:
                 return  # 只处理同号自身消息
             group_id = getter("group_id")
@@ -471,6 +505,11 @@ class AIRightsPlugin(Star):
             if time.time() - self._outbound_ts.get(umo, 0.0) <= guard:
                 return
             fresh = self._trigger_session_mute(umo)
+            self._bus_events_takeover += 1
+            logger.info(
+                f"[ai_rights] 检测到同号真人消息 → 会话静音：{umo}"
+                f"（{'新静音' if fresh else '续期'}，文字：{text[:30]!r}）"
+            )
             if fresh and self._cfg_get("notify_on_real_person", False):
                 notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
                 try:
@@ -900,7 +939,28 @@ class AIRightsPlugin(Star):
         g = len(self._blacklist_global)
         s = len(self._blacklist_sessions.get(umo, set()))
         lines.append(f"黑名单：全局 {g} 人，本会话 {s} 人（/黑名单 查看）")
+        lines.append("")
+        lines.append(self._bus_diag_text())
         return "\n".join(lines)
+
+    def _bus_diag_text(self) -> str:
+        """同号接管诊断：一眼看清钩子/开关/事件流是否正常。"""
+        enabled = bool(self._cfg_get("include_self_message", False))
+        hooks = len(getattr(self, "_bus_bots", None) or [])
+        if not enabled:
+            return "同号接管：未开启（开启 include_self_message 后，手机发的消息会让本会话静音）"
+        if hooks <= 0:
+            return "同号接管：已配置但未挂上事件总线 ⚠️（请确认 AstrBot 使用 aiocqhttp 适配器）"
+        if self._bus_events_seen <= 0:
+            return (
+                f"同号接管：总线已挂 ×{hooks}，尚未收到 message_sent 事件 ⚠️ "
+                "请确认协议端（NapCat 等）已开启「上报自身消息 reportSelfMessage」"
+            )
+        ago = time.time() - self._bus_last_event_ts
+        return (
+            f"同号接管：总线 ×{hooks}，收到自身消息事件 {self._bus_events_seen} 条"
+            f"（最近 {ago:.0f} 秒前），触发接管 {self._bus_events_takeover} 次"
+        )
 
     @filter.command("AI人权", alias={"人权状态", "ai_rights"})
     async def ai_rights_overview(self, event: AstrMessageEvent, action: str = ""):
