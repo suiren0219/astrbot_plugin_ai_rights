@@ -588,7 +588,7 @@ async function blRemoveAt(i){ const row=BLROWS[i]; if(!row) return; try{ await a
 /* ---------------- 设置页：按 schema 分组渲染 ---------------- */
 const GROUPS = [
   ["真人接管（老板键）", [
-    ["real_person_ids","textarea"],["include_self_message","switch"],["self_echo_guard_seconds","number"],
+    ["real_person_ids","textarea"],["self_message_takeover","switch"],["include_self_message","switch"],["self_echo_guard_seconds","number"],
     ["mute_minutes","number"],["refresh_on_each_message","switch"],["notify_on_real_person","switch"],
     ["notify_text_real_person","text"],["trigger_ignore_prefixes","text"],
     ["suppress_scope","select",[["llm","只拦 AI 聊天回复（推荐）"],["all","连插件指令一起拦（慎用）"]]],

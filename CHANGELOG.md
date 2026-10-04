@@ -3,6 +3,18 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.0.0] - 2026-10-02
+
+### 新增
+- **`self_message_takeover`（默认开启）**：只看「是不是自己账号发的」，不再信任协议方向字段。
+  凡是发送者 == 机器人账号、且内容与插件最近外发记录不一致的消息，一律视为持有者用手机接管，
+  立即静默该会话。实测背景：NapCat 会把手机真人消息也标成 `message_sent`，导致按方向字段
+  判断会漏掉真人发言，这个开关彻底绕开了该不确定性
+- 插件自身的主动消息（接管提示、申诉结果、日报）发送时登记外发记录，不会被误判为真人发言
+
+### 变更
+- 同号接管判定顺序：内容匹配（是否本进程刚发出）→ 其余一律视为真人
+
 ## [2.9.0] - 2026-10-02
 
 ### 修复（本插件最严重的 bug）
@@ -159,6 +171,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.0.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.0.0
 [2.9.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.9.0
 [2.8.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.1
 [2.8.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.0

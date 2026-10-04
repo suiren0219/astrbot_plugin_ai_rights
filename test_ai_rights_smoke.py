@@ -669,7 +669,8 @@ async def _run_v6(mod, state_path):
     mod.STATE_PATH = state_path
     bot = FakeBot()
     ctx = FakeWebContext(bot=bot, platform_id="qq-main")   # 平台实例名故意不是 aiocqhttp
-    cfg = {"real_person_ids": "", "persist_state": True, "include_self_message": True}
+    cfg = {"real_person_ids": "", "persist_state": True, "include_self_message": True,
+           "self_message_takeover": False}   # 本段专测旧开关（方向字段路径）
     p = mod.AIRightsPlugin(ctx, cfg)
     await p.initialize()
     check("message_sent 总线已订阅", "message_sent" in bot.subs and len(bot.subs["message_sent"]) == 1)
@@ -694,11 +695,13 @@ async def _run_v6(mod, state_path):
     check("AI 刚发言后真人异文本仍触发接管", p._session_mute_left(umo) > 0)
     p._session_mutes.pop(umo, None)
     p._outbound_texts.clear()
-    # 关闭开关后总线处理器静默
+    # 关闭开关后总线处理器静默（两个开关都关）
     p.config["include_self_message"] = False
+    p.config["self_message_takeover"] = False
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "开关关了"})
     check("开关关闭后不触发接管", p._session_mute_left(umo) == 0)
     p.config["include_self_message"] = True
+    p.config["self_message_takeover"] = False  # 保持本段只走旧开关路径
     # 非同号消息（他人消息混入 message_sent，理论上不会发生）不接管
     await handler({"self_id": 123456, "user_id": 654321, "group_id": 933001, "raw_message": "别人的消息"})
     check("非同号消息不触发接管", p._session_mute_left(umo) == 0)
@@ -755,6 +758,68 @@ async def _run_v7(mod, state_path):
     await p.terminate()
 
 
+async def _run_v10(mod, state_path):
+    """v3.0 self_message_takeover：看到「自己账号」的发言（非机器人发出）→ 静默。"""
+    mod.STATE_PATH = state_path
+    bot = FakeBot()
+    ctx = FakeWebContext(bot=bot, platform_id="qq-linux-bot")
+    # 注意：include_self_message 故意关着，只靠新开关（默认开）
+    cfg = {"persist_state": True, "include_self_message": False,
+           "self_message_takeover": True, "real_person_ids": ""}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    check("新开关默认挂上总线", "message_sent" in bot.subs)
+    handler = bot.subs["message_sent"][0]
+    grp = "qq-linux-bot:GroupMessage:933001"
+
+    # 核心场景：协议把手机消息标成 message_sent（出站类型），也要接管
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": 933001, "raw_message": "好耶"})
+    check("手机同号消息（即便标成 message_sent）触发接管", p._session_mute_left(grp) > 0)
+
+    # 静音期间别人 @ 机器人 → 被拦（不再抢答）
+    ev_other = FakeEvent(sender="7002", text="@机器人 来聊聊", wake=True, umo=grp)
+    await p.gatekeeper(ev_other)
+    check("静音期间别人@机器人被拦", ev_other.call_llm is True)
+
+    # 机器人自己发的话不算真人（内容匹配豁免）
+    p._session_mutes.pop(grp, None)
+    p._outbound_texts.append((grp, "晚安哦", time.time()))
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": 933001, "raw_message": "晚安哦"})
+    check("机器人自己发的同文本消息不触发", p._session_mute_left(grp) == 0)
+
+    # AI 刚说完话后，真人紧接着发不同内容 → 仍触发（旧时间窗会误吞）
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": 933001, "raw_message": "啊？我本人上线了"})
+    check("AI 发言后真人异文本仍触发接管", p._session_mute_left(grp) > 0)
+    p._session_mutes.pop(grp, None)
+
+    # 私聊同号消息也接管
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": None, "raw_message": "私聊接管"})
+    check("私聊同号消息触发接管", p._session_mute_left("qq-linux-bot:FriendMessage:7001") > 0)
+
+    # 插件的主动提示（登记过外发）不触发
+    p._session_mutes.clear()
+    umo2 = "qq-linux-bot:GroupMessage:933002"
+    p._note_own_send(umo2, "（AI 暂时退下，真人接管中…）")
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": 933002, "raw_message": "（AI 暂时退下，真人接管中…）"})
+    check("插件主动提示不被当成真人", p._session_mute_left(umo2) == 0)
+
+    # 关闭新开关且旧开关也关 → 不接管
+    p.config["self_message_takeover"] = False
+    p._session_mutes.clear()
+    await handler({"self_id": 7001, "user_id": 7001, "group_id": 933003, "raw_message": "开关都关了"})
+    check("两开关都关时不接管", p._session_mute_left("qq-linux-bot:GroupMessage:933003") == 0)
+
+    # 管线内普通消息路径（不走总线）同样生效
+    p.config["self_message_takeover"] = True
+    p._session_mutes.clear()
+    ev_pipe = FakeEvent(sender="7001", self_id="7001", text="手机上再说一句",
+                        raw={"post_type": "message"}, umo="qq-linux-bot:GroupMessage:933004")
+    await p.gatekeeper(ev_pipe)
+    check("管线内同号消息同样触发接管", p._session_mute_left("qq-linux-bot:GroupMessage:933004") > 0)
+
+    await p.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -789,7 +854,7 @@ async def _run_v8(mod, state_path):
     bot = FakeBot()
     # 平台实例 id 故意叫随便的名字（真实场景就是这样，绝不能靠 "aiocqhttp" 匹配）
     ctx = FakeWebContext(bot=bot, platform_id="my-napcat-config-1")
-    cfg = {"persist_state": True, "include_self_message": True}
+    cfg = {"persist_state": True, "include_self_message": True, "self_message_takeover": False}
     p = mod.AIRightsPlugin(ctx, cfg)
     await p.initialize()
     check("平台实例 id 不叫 aiocqhttp 也能挂上总线", "message_sent" in bot.subs)
@@ -907,19 +972,26 @@ async def _run(mod, state_path):
     check("停用后门卫不作为", ev_off.call_llm is False and ev_off.stopped is False)
     p._session_switch.pop(umo, None)
 
-    # 同号模式：协议明确标记 outbound 的机器人消息绝不触发；普通 message 入站的手机真人消息立即触发
+    # 同号接管（v3.0 新语义）：判定依据是「内容是否为本进程刚发出的」，
+    # 不再信任协议方向字段——实测 NapCat 会把手机真人消息也标成 message_sent。
     p.config["include_self_message"] = True
+    p.config["self_message_takeover"] = True
     p._session_mutes.pop(umo, None)
+
+    # 机器人主动发送并登记过外发 → 同文本回显不触发
+    p._note_own_send(umo, "机器人主动发的")
     ev_out = FakeEvent(sender="bot", self_id="bot", text="机器人主动发的", raw={"post_type": "message_sent"})
     await p.gatekeeper(ev_out)
-    check("明确 outbound 的机器人消息不触发真人接管", p._session_mute_left(umo) <= 0)
+    check("机器人自身回显（内容匹配）不触发接管", p._session_mute_left(umo) <= 0)
+
+    # 真人手机消息：即使协议标成 message_sent / is_outbound，内容对不上也要接管
     ev_in = FakeEvent(sender="bot", self_id="bot", text="持有者手机发的", raw={"post_type": "message"})
     await p.gatekeeper(ev_in)
-    check("同号普通 inbound 手机消息立即触发接管", p._session_mute_left(umo) > 0)
+    check("同号手机消息立即触发接管", p._session_mute_left(umo) > 0)
     p._session_mutes.pop(umo, None)
-    ev_flag_out = FakeEvent(sender="bot", self_id="bot", text="带出站标记", raw={"post_type": "message", "is_outbound": True})
+    ev_flag_out = FakeEvent(sender="bot", self_id="bot", text="被误标出站的真话", raw={"post_type": "message", "is_outbound": True})
     await p.gatekeeper(ev_flag_out)
-    check("is_outbound 标记也能排除机器人回显", p._session_mute_left(umo) <= 0)
+    check("协议误标出站的真话仍触发接管", p._session_mute_left(umo) > 0)
     p.config["include_self_message"] = False
 
     # ---- suppress_scope=all：非指令消息 stop_event，指令放行 ----
@@ -959,7 +1031,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v2.9", meta is not None and "v2.9" in meta[3])
+        check("@register 版本号是 v3.0", meta is not None and "v3.0" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -1006,6 +1078,9 @@ def main():
 
         print("== 语义锚（v2.9 should_call_llm 方向）==")
         asyncio.run(_run_v9(mod, os.path.join(os.path.dirname(state_path), "state_v9.json")))
+
+        print("== 同号接管开关（v3.0 self_message_takeover）==")
+        asyncio.run(_run_v10(mod, os.path.join(os.path.dirname(state_path), "state_v10.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

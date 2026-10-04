@@ -20,6 +20,13 @@
     "editor_mode": true,
     "editor_language": "text"
   },
+  "self_message_takeover": {
+    "description": "同号接管（检测到「自己账号」的发言就静默）",
+    "type": "bool",
+    "default": true,
+    "obvious_hint": true,
+    "hint": "推荐开启。机器人账号挂在服务器（Linux），你偶尔用手机登同一账号发言时，只要消息不是机器人自己发出去的，就立即视为真人接管、该会话静默。不依赖协议的方向字段，兼容把手机消息标成任何类型的协议端。识别依据：发送者==机器人账号，且内容与机器人最近外发记录不一致。"
+  },
   "include_self_message": {
     "description": "同号模式：机器人登的就是你本人的 QQ 号",
     "type": "bool",

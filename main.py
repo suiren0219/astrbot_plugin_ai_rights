@@ -176,9 +176,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.9.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.0.0")
 class AIRightsPlugin(Star):
-    version = "v2.9.0"
+    version = "v3.0.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -369,6 +369,44 @@ class AIRightsPlugin(Star):
             return "inbound"
         return "unknown"
 
+    def _note_own_send(self, umo: str, text: str) -> None:
+        """插件主动发消息后登记外发记录，防止被同号接管开关误判为真人发言。"""
+        try:
+            self._outbound_ts[umo] = time.time()
+            if text:
+                self._outbound_texts.append((umo, str(text), time.time()))
+                while len(self._outbound_texts) > 50:
+                    self._outbound_texts.popleft()
+        except Exception:
+            pass
+
+    def _looks_like_own_outbound(self, umo: str, text: str) -> bool:
+        """这条消息是否确系「本进程刚刚主动发出」的回显。
+
+        判定极保守：必须能在最近的外发记录里找到同一会话、且文本一致；
+        文本不同的（真人手打）一律不算，防止"AI 刚说完话后真人紧接着发言"被误吞。
+        """
+        now = time.time()
+        guard = max(5.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
+        while self._outbound_texts and now - self._outbound_texts[0][2] > guard:
+            self._outbound_texts.popleft()
+        if not self._outbound_texts:
+            return False
+        norm = lambda s: re.sub(r"\s+", "", re.sub(r"\[CQ:[^\]]*\]", "", str(s or "")))[:80]
+        target = norm(text)
+        if not target:
+            # 无文本（图片等）：无法比对内容，只能在守卫时间内保守认为可能是自己发的
+            return any(now - ts <= guard and u == umo for u, _t, ts in self._outbound_texts)
+        for u, t, ts in self._outbound_texts:
+            if now - ts > guard:
+                continue
+            if u != umo:
+                continue
+            nt = norm(t)
+            if nt and (nt == target or (len(target) >= 2 and target in nt) or (len(nt) >= 2 and nt in target)):
+                return True
+        return False
+
     def _is_real_person_event(self, event: AstrMessageEvent, umo: str, sender: str, self_id: str, text: str) -> bool:
         # 指令不算真人闲聊：/真人解除 之类的消息不该把自己再次静音
         if text and any(text.startswith(p) for p in self._ignore_prefixes()):
@@ -376,8 +414,19 @@ class AIRightsPlugin(Star):
         ids = self._real_person_ids()
         if sender and sender in ids and sender != self_id:
             return True
-        if not self._cfg_get("include_self_message", False) or not self_id or sender != self_id:
+        if not self_id or sender != self_id:
             return False
+        include_self = bool(self._cfg_get("include_self_message", False))
+        takeover_self = bool(self._cfg_get("self_message_takeover", True))
+        if not include_self and not takeover_self:
+            return False
+
+        # 强力开关（默认开）：同号消息一律视为真人接管，除非能确认是本进程发出的。
+        # 判定顺序：内容匹配（防误标为出站的真人消息被漏掉）→ 出站标记 → 守卫窗口。
+        if takeover_self:
+            if self._looks_like_own_outbound(umo, text):
+                return False   # 确系机器人主动发出 → 不接管
+            return True        # 其余一律视为持有者用手机接管
 
         direction = self._self_message_direction(event)
         if direction == "outbound":
@@ -442,6 +491,8 @@ class AIRightsPlugin(Star):
         if self._bus_bot is not None:
             return  # 已挂载
         self._bus_hook_tried = time.time()
+        if not (self._cfg_get("include_self_message", False) or self._cfg_get("self_message_takeover", True)):
+            return  # 两个开关都关着，不必浪费订阅
         subs = getattr(self, "_bus_bots", None)
         if subs is None:
             subs = []
@@ -550,7 +601,7 @@ class AIRightsPlugin(Star):
     async def _on_self_message_bus(self, ev):
         """message_sent 事件（aiocqhttp.Event，dict 子类）：同号手机消息 → 立即接管。"""
         try:
-            if not self._cfg_get("include_self_message", False):
+            if not (self._cfg_get("include_self_message", False) or self._cfg_get("self_message_takeover", True)):
                 return
             getter = ev.get if hasattr(ev, "get") else (lambda k, d=None: getattr(ev, k, d))
             self_id = str(getter("self_id") or "")
@@ -569,7 +620,7 @@ class AIRightsPlugin(Star):
             gid = str(group_id or sender)
             umo_candidates = self._candidate_session_keys(is_group, gid)
             text = str(getter("raw_message") or "").strip()
-            if self._match_outbound_echo(text, umo_candidates):
+            if self._looks_like_own_outbound(umo_candidates[0], text) or self._match_outbound_echo(text, umo_candidates):
                 self._bus_last_skip = "判定为机器人自身回显（内容匹配）"
                 return  # 是机器人自己发的 → 不接管
             if text and any(text.startswith(p) for p in self._ignore_prefixes()):
@@ -599,6 +650,7 @@ class AIRightsPlugin(Star):
             if fresh and self._cfg_get("notify_on_real_person", False):
                 notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
                 try:
+                    self._note_own_send(umo, notice)
                     await self.context.send_message(umo, MessageChain().message(notice))
                 except Exception as e:
                     logger.debug(f"[ai_rights] 同号接管提示发送失败: {e}")
@@ -860,6 +912,7 @@ class AIRightsPlugin(Star):
             await asyncio.sleep(max(1.0, (target - now).total_seconds()))
             try:
                 text = self._report_text(days_ago=1)
+                self._note_own_send(origin, text)
                 await self.context.send_message(origin, MessageChain().message(text))
             except Exception as e:
                 logger.warning(f"[ai_rights] 日报推送失败: {e}")
@@ -890,8 +943,10 @@ class AIRightsPlugin(Star):
             if not self._scope_allows(event, umo):
                 return  # 作用范围之外（如未加白的群），本插件整条消息不参与
             # 同号模式：平台适配器可能比插件晚加载，总线没挂上就每分钟重试一次
-            if self._bus_bot is None and self._cfg_get("include_self_message", False) \
-                    and time.time() - self._bus_hook_tried > 60:
+            if self._bus_bot is None and (
+                self._cfg_get("include_self_message", False)
+                or self._cfg_get("self_message_takeover", True)
+            ) and time.time() - self._bus_hook_tried > 60:
                 self._hook_self_message_bus()
             sender = str(event.get_sender_id() or "")
             self_id = str(event.get_self_id() or "")
@@ -1059,10 +1114,10 @@ class AIRightsPlugin(Star):
 
     def _bus_diag_text(self) -> str:
         """同号接管诊断：一眼看清钩子/开关/事件流是否正常。"""
-        enabled = bool(self._cfg_get("include_self_message", False))
+        enabled = bool(self._cfg_get("self_message_takeover", True)) or bool(self._cfg_get("include_self_message", False))
         hooks = len(getattr(self, "_bus_bots", None) or [])
         if not enabled:
-            return "同号接管：未开启（开启 include_self_message 后，手机发的消息会让本会话静音）"
+            return "同号接管：未开启（开启 self_message_takeover 后，手机发的消息会让本会话静音）"
         if hooks <= 0:
             return "同号接管：已配置但未挂上事件总线 ⚠️（请确认 AstrBot 使用 aiocqhttp 适配器）"
         if self._bus_events_seen <= 0:
@@ -1090,7 +1145,9 @@ class AIRightsPlugin(Star):
         event.should_call_llm(True)
         left = self._session_mute_left(self._umo(event))
         ids = self._real_person_ids()
-        mode = "同号模式（自发回显）+ " if self._cfg_get("include_self_message", False) else ""
+        mode = "同号接管（自见消息静默）+ " if (
+            self._cfg_get("self_message_takeover", True) or self._cfg_get("include_self_message", False)
+        ) else ""
         text = (
             f"👤 真人接管\n"
             f"名单：{len(ids)} 人（{mode}在 WebUI 配置 real_person_ids）\n"
@@ -1344,6 +1401,7 @@ class AIRightsPlugin(Star):
             else f"❌ 你的申诉 #{aid} 已被管理员驳回，请冷静之后再好好说话。"
         )
         try:
+            self._note_own_send(target["umo"], notice)
             await self.context.send_message(target["umo"], MessageChain().message(notice))
         except Exception as e:
             logger.warning(f"[ai_rights] 申诉结果推送失败（#{aid}）: {e}")
@@ -1404,7 +1462,8 @@ class AIRightsPlugin(Star):
         """全新安装且还没配置真人识别时，在日志里给一段三步上手引导。"""
         if not self._fresh_install:
             return
-        if self._real_person_ids() or self._cfg_get("include_self_message", False):
+        if self._real_person_ids() or self._cfg_get("include_self_message", False) \
+                or self._cfg_get("self_message_takeover", True):
             return
         logger.info(
             "[ai_rights] 首次安装，欢迎！三步开始使用：\n"
