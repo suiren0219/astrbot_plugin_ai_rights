@@ -19,6 +19,29 @@ PLUGIN_ZIP = os.path.join(ROOT, "astrbot_plugin_ai_rights.zip")
 EXCLUDE_DIRS = {"__pycache__", ".git", ".venv", "venv"}
 
 
+def sync_readme_version():
+    """打包前把 README 标题与 version 徽章同步为 metadata.yaml 的版本号，防止文档版本漂移。"""
+    import re as _re
+    root = PLUGIN_DIR
+    meta_path = os.path.join(root, "metadata.yaml")
+    readme_path = os.path.join(root, "README.md")
+    if not (os.path.isfile(meta_path) and os.path.isfile(readme_path)):
+        return
+    ver = ""
+    for line in open(meta_path, encoding="utf-8"):
+        if line.strip().startswith("version:"):
+            ver = line.split(":", 1)[1].strip().lstrip("vV")
+            break
+    if not ver:
+        return
+    readme = open(readme_path, encoding="utf-8").read()
+    new_readme = _re.sub(r"(?m)^# (.+?)v[0-9][0-9.]*$", rf"# v{ver}", readme, count=1)
+    new_readme = _re.sub(r"badge/version-v[0-9][0-9.]*-", f"badge/version-v{ver}-", new_readme, count=1)
+    if new_readme != readme:
+        open(readme_path, "w", encoding="utf-8", newline="").write(new_readme)
+        print(f"README 版本已同步为 v{ver}")
+
+
 def collect():
     """按相对路径收集插件目录里的全部文件，排序保证可复现。"""
     entries = []
@@ -41,6 +64,7 @@ def sha256(path: str) -> str:
 
 
 def main():
+    sync_readme_version()
     entries = collect()
     if not any(n.endswith("README.md") for n, _ in entries):
         raise SystemExit("包内缺少 README.md，AstrBot 面板会拒收，先补上再打包")
