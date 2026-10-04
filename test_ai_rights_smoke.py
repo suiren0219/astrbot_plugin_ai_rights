@@ -157,7 +157,8 @@ class FakeEvent:
         self.is_at_or_wake_command = wake
         self.unified_msg_origin = umo
         self.raw_message = raw or {}
-        self.call_llm = True
+        # 真实 AstrMessageEvent 默认 call_llm=False（放行）；should_call_llm(True)=禁止
+        self.call_llm = False
         self.stopped = False
         self.sent = []
 
@@ -310,21 +311,21 @@ async def _run_v2(mod, state_path):
     # ---- 黑名单 ----
     ev = FakeEvent(sender="44444", text="来聊聊天", wake=True, umo=umo)
     await p.gatekeeper(ev)
-    check("拉黑前：路人正常被理", ev.call_llm is True)
+    check("拉黑前：路人正常被理", ev.call_llm is False)
     ev_cmd = FakeEvent(sender="10086", text="人权拉黑 44444", role="admin", wake=True, umo=umo)
     res = [r async for r in p.blacklist_add(ev_cmd)]
     check("人权拉黑命令生效（全局）", "44444" in p._blacklist_global)
     ev2 = FakeEvent(sender="44444", text="我再说一句", wake=True, umo=umo)
     p._flood_windows.clear()  # 拉黑前那条消息合法进过窗口，清掉再验证拉黑后不再进
     await p.gatekeeper(ev2)
-    check("黑名单用户 LLM 被拒", ev2.call_llm is False and not ev2.stopped)
+    check("黑名单用户 LLM 被拒", ev2.call_llm is True and not ev2.stopped)
     check("黑名单拦截已计入统计", sum(d.get("block", 0) for d in p._stats.values()) >= 1)
     check("黑名单用户不进骚扰窗口", f"{umo}|44444" not in p._flood_windows)
     # 管理员豁免黑名单（防止把管理员自己锁死）；用不在真人名单里的管理员，避免触发接管静音
     p._blacklist_global.add("30001")
     ev_admin = FakeEvent(sender="30001", text="管理员说话", role="admin", wake=True, umo=umo)
     await p.gatekeeper(ev_admin)
-    check("管理员不受黑名单影响", ev_admin.call_llm is True)
+    check("管理员不受黑名单影响", ev_admin.call_llm is False)
     p._blacklist_global.discard("10086")
     # 会话级黑名单
     ev_cmd2 = FakeEvent(sender="10086", text="人权拉黑 55555 本群", role="admin", wake=True, umo=umo)
@@ -448,7 +449,7 @@ async def _run_webui(mod, state_path):
     await routes[prefix + "blacklist/set"][1]()
     ev = FakeEvent(sender="777", text="hi", wake=True, umo="u:G:1")
     await p.gatekeeper(ev)
-    check("面板拉黑后门卫拒绝服务", "777" in p._blacklist_global and ev.call_llm is False)
+    check("面板拉黑后门卫拒绝服务", "777" in p._blacklist_global and ev.call_llm is True)
     quart_req.payload = {"uid": "777", "add": False, "umo": ""}
     await routes[prefix + "blacklist/set"][1]()
     check("面板解黑生效", "777" not in p._blacklist_global)
@@ -504,7 +505,7 @@ async def _run_v3(mod, state_path):
     p._session_mutes[umo] = {"expire": time.time() - 1, "updated": 0}
     ev = FakeEvent(sender="555", text="你好", wake=True, umo=umo)
     await p.gatekeeper(ev)
-    check("过期静音不再压制（限频不影响裁决）", ev.call_llm is True)
+    check("过期静音不再压制（限频不影响裁决）", ev.call_llm is False)
 
     # LLM 裁定缓存：同一人同一段话只问一次模型
     p.config["llm_judge_enabled"] = True
@@ -552,7 +553,7 @@ async def _run_v4(mod, state_path):
     # 无意义算数：should_answer=false → AI 不回，且不算辱骂
     ev1 = FakeEvent(sender="701", text="1+1等于几", wake=True, umo=umo)
     await p.gatekeeper(ev1)
-    check("无意义算数被话题守护拦下（AI 不回）", ev1.call_llm is False)
+    check("无意义算数被话题守护拦下（AI 不回）", ev1.call_llm is True)
     check("没进辱骂冷却（跑题≠骚扰）", p._user_mute_left(umo, "701") is None)
     check("计入无意义不答统计", sum(d.get("skipped", 0) for d in p._stats.values()) == 1)
 
@@ -565,7 +566,7 @@ async def _run_v4(mod, state_path):
     prov._model_or_reply = '{"harass": false, "should_answer": true}'
     ev3 = FakeEvent(sender="703", text="今天天气真不错啊", wake=True, umo=umo)
     await p.gatekeeper(ev3)
-    check("值得回答的消息正常放行", ev3.call_llm is True)
+    check("值得回答的消息正常放行", ev3.call_llm is False)
 
     # 双判定的另一维：harass=true 照样进辱骂冷却
     prov._model_or_reply = '{"harass": true, "should_answer": true}'
@@ -583,7 +584,7 @@ async def _run_v4(mod, state_path):
     prov._model_or_reply = '{"harass": false, "should_answer": false}'
     ev5 = FakeEvent(sender="705", text="随便说点什么吧", wake=True, umo=umo)
     await p.gatekeeper(ev5)
-    check("话题守护关闭后不拦截", ev5.call_llm is True)
+    check("话题守护关闭后不拦截", ev5.call_llm is False)
 
     # overview 统计带 skipped
     routes = {r[0]: r for r in ctx.routes}
@@ -667,26 +668,32 @@ async def _run_v6(mod, state_path):
     """v2.7 同号接管：aiocqhttp 总线订阅 message_sent，手机真人消息立即接管、机器人回显不触发。"""
     mod.STATE_PATH = state_path
     bot = FakeBot()
-    ctx = FakeWebContext(bot=bot)
+    ctx = FakeWebContext(bot=bot, platform_id="qq-main")   # 平台实例名故意不是 aiocqhttp
     cfg = {"real_person_ids": "", "persist_state": True, "include_self_message": True}
     p = mod.AIRightsPlugin(ctx, cfg)
     await p.initialize()
     check("message_sent 总线已订阅", "message_sent" in bot.subs and len(bot.subs["message_sent"]) == 1)
     handler = bot.subs["message_sent"][0]
-    umo = "aiocqhttp:GroupMessage:933001"
+    # 会话键前缀 = 平台实例名（真实 umo 格式），不再是硬编码 aiocqhttp
+    umo = "qq-main:GroupMessage:933001"
 
     # 手机端持有者消息（同号入站，无出站标记）→ 立即接管
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "我来接管一下"})
-    check("同号手机消息触发会话接管", p._session_mute_left(umo) > 0)
+    check("同号手机消息触发会话接管（真实平台名键）", p._session_mute_left(umo) > 0)
     # 私聊同号消息同样接管
     await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "raw_message": "私聊也接管"})
-    check("同号手机私聊消息触发接管", p._session_mute_left("aiocqhttp:FriendMessage:123456") > 0)
-    # 守卫窗口内到达的（机器人 API 发送回显）不触发
+    check("同号手机私聊消息触发接管", p._session_mute_left("qq-main:FriendMessage:123456") > 0)
+    # 机器人 API 发送回显（同文本）不触发
     import time as _t
-    p._outbound_ts[umo] = _t.time()
     p._session_mutes.pop(umo, None)
+    p._outbound_texts.append((umo, "回显", _t.time()))
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "回显"})
-    check("守卫窗口内的机器人回显不触发", p._session_mute_left(umo) == 0)
+    check("机器人自身回显（同文本）不触发", p._session_mute_left(umo) == 0)
+    # 关键回归：AI 刚发言后，真人紧接着发「不同内容」→ 必须触发（旧时间窗会误吞）
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "我来说句不一样的"})
+    check("AI 刚发言后真人异文本仍触发接管", p._session_mute_left(umo) > 0)
+    p._session_mutes.pop(umo, None)
+    p._outbound_texts.clear()
     # 关闭开关后总线处理器静默
     p.config["include_self_message"] = False
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "开关关了"})
@@ -748,6 +755,34 @@ async def _run_v7(mod, state_path):
     await p.terminate()
 
 
+async def _run_v9(mod, state_path):
+    """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
+
+    官方证据：tests/test_process_stage_images.py 中事件 call_llm=True 时默认 LLM 被跳过。
+    本测试模拟该闸门，确保插件在压制场景下真的会阻止 LLM、放行场景允许 LLM。
+    """
+    mod.STATE_PATH = state_path
+    ctx = FakeWebContext()
+    cfg = {"persist_state": True, "real_person_ids": "10086"}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+
+    def llm_would_run(ev) -> bool:
+        # 官方 process_stage 闸门：not event.call_llm and is_at_or_wake_command
+        return (not ev.call_llm) and bool(ev.is_at_or_wake_command)
+
+    umo = "aiocqhttp:FriendMessage:70001"
+    await p.gatekeeper(FakeEvent(sender="10086", text="真人接管", umo=umo))
+    ev_others = FakeEvent(sender="70002", text="在吗", wake=True, umo=umo)
+    await p.gatekeeper(ev_others)
+    check("语义锚：静音期间官方闸门不放行 LLM", llm_would_run(ev_others) is False)
+
+    ev_free = FakeEvent(sender="70003", text="正常聊天", wake=True, umo="aiocqhttp:FriendMessage:70099")
+    await p.gatekeeper(ev_free)
+    check("语义锚：无静音时官方闸门正常放行", llm_would_run(ev_free) is True)
+    await p.terminate()
+
+
 async def _run_v8(mod, state_path):
     """v2.8.1：平台实例命名不匹配修复 + 同号接管诊断 + 群聊他人@机器人被拦。"""
     mod.STATE_PATH = state_path
@@ -759,7 +794,7 @@ async def _run_v8(mod, state_path):
     await p.initialize()
     check("平台实例 id 不叫 aiocqhttp 也能挂上总线", "message_sent" in bot.subs)
     handler = bot.subs["message_sent"][0]
-    grp = "aiocqhttp:GroupMessage:933001"
+    grp = "my-napcat-config-1:GroupMessage:933001"   # 真实 umo：平台实例名打头
 
     # 真人在群里用手机发消息 → 该群会话静音
     await handler({"self_id": 7001, "user_id": 7001, "group_id": 933001, "raw_message": "大家好啊"})
@@ -768,7 +803,7 @@ async def _run_v8(mod, state_path):
     # 关键断言：群里别人 @ 机器人（走普通消息管线）→ 同样被静音拦住
     others = FakeEvent(sender="7002", text="@机器人 帮我算个题", wake=True, umo=grp)
     await p.gatekeeper(others)
-    check("静音期间别人@机器人也被拦（不再抢答）", others.call_llm is False)
+    check("静音期间别人@机器人也被拦（不再抢答）", others.call_llm is True)
 
     # 诊断信息正确反映总线状态
     diag = p._bus_diag_text()
@@ -776,7 +811,7 @@ async def _run_v8(mod, state_path):
 
     # 私聊真人消息同样接管
     await handler({"self_id": 7001, "user_id": 7001, "group_id": None, "raw_message": "私聊"})
-    check("手机真人私聊触发接管", p._session_mute_left("aiocqhttp:FriendMessage:7001") > 0)
+    check("手机真人私聊触发接管", p._session_mute_left("my-napcat-config-1:FriendMessage:7001") > 0)
 
     # 未开启同号模式时诊断提示开启方法
     p.config["include_self_message"] = False
@@ -824,7 +859,7 @@ async def _run(mod, state_path):
     # 静音期内，任何人的 LLM 都被拦（会话级）；换个发送者避免计入后面 77777 的刷屏窗口
     ev4 = FakeEvent(sender="55555", text="在吗")
     await p.gatekeeper(ev4)
-    check("会话静音压制 LLM", ev4.call_llm is False and not ev4.stopped)
+    check("会话静音压制 LLM", ev4.call_llm is True and not ev4.stopped)
 
     # ---- 名单外的人不受会话静音影响时：先解除再测反骚扰 ----
     p._session_mutes.pop(umo, None)
@@ -836,11 +871,11 @@ async def _run(mod, state_path):
     left = p._user_mute_left(umo, "77777")
     check("刷屏超过阈值 → 用户级冷处理", left is not None and left[1] == "flood")
     check("刷屏提示只发一次", any("冷却" in c.text for c in ev_flood.sent))
-    check("被冷处理的人 LLM 被拦", ev_flood.call_llm is False)
+    check("被冷处理的人 LLM 被拦", ev_flood.call_llm is True)
 
     ev_other = FakeEvent(sender="88888", text="我是路人")
     await p.gatekeeper(ev_other)
-    check("同会话其他用户不受牵连", ev_other.call_llm is True)
+    check("同会话其他用户不受牵连", ev_other.call_llm is False)
 
     # ---- 辱骂 ----
     ev_insult = FakeEvent(sender="66666", text="你就是个傻逼")
@@ -869,7 +904,7 @@ async def _run(mod, state_path):
     p._session_switch[umo] = False
     ev_off = FakeEvent(sender="10086", text="我还说")
     await p.gatekeeper(ev_off)
-    check("停用后门卫不作为", ev_off.call_llm is True and ev_off.stopped is False)
+    check("停用后门卫不作为", ev_off.call_llm is False and ev_off.stopped is False)
     p._session_switch.pop(umo, None)
 
     # 同号模式：协议明确标记 outbound 的机器人消息绝不触发；普通 message 入站的手机真人消息立即触发
@@ -924,7 +959,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v2.8", meta is not None and "v2.8" in meta[3])
+        check("@register 版本号是 v2.9", meta is not None and "v2.9" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -968,6 +1003,9 @@ def main():
 
         print("== 驱动同号接管修复（v2.8.1 平台命名 + 他人@被拦）==")
         asyncio.run(_run_v8(mod, os.path.join(os.path.dirname(state_path), "state_v8.json")))
+
+        print("== 语义锚（v2.9 should_call_llm 方向）==")
+        asyncio.run(_run_v9(mod, os.path.join(os.path.dirname(state_path), "state_v9.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

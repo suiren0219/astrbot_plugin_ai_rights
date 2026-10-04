@@ -176,9 +176,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.8.1")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v2.9.0")
 class AIRightsPlugin(Star):
-    version = "v2.8.1"
+    version = "v2.9.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -220,10 +220,18 @@ class AIRightsPlugin(Star):
         self._update_task: asyncio.Task | None = None
         self._bus_bot = None
         self._bus_handler = None
+        self._bus_bots: list = []          # 已订阅的 bot 客户端
+        self._bus_subs: list = []          # [(bot, handler)]
         self._bus_hook_tried = 0.0
-        self._bus_events_seen = 0      # 收到 message_sent 计数（诊断）
-        self._bus_events_takeover = 0   # 其中触发接管的计数
-        self._bus_last_event_ts = 0.0   # 最近一条 message_sent 时间
+        self._bus_events_seen = 0          # 收到 message_sent 计数（诊断）
+        self._bus_events_takeover = 0      # 其中触发接管的计数
+        self._bus_last_event_ts = 0.0      # 最近一条 message_sent 时间
+        self._bus_last_skip = ""           # 最近一次未触发原因（诊断）
+        self._bus_last_takeover_umo = ""   # 最近一次触发的会话键（诊断）
+        self._seen_platform_ids: set = set()   # 管线中观察到的平台实例 id
+        self._seen_umo_by_session: dict = {}   # session_id -> 真实 umo（管线里学到的）
+        self._outbound_texts: deque = deque()  # (umo, 文本, 时间) 机器人最近外发文本
+        self._bus_platform_ids: list = []      # 订阅总线时记录的平台实例 id
 
     # ------------------------------------------------------------------
     # 配置读取
@@ -443,6 +451,13 @@ class AIRightsPlugin(Star):
             bot = getattr(platform, "bot", None)
             if bot is None or not hasattr(bot, "subscribe"):
                 continue
+            # 记录平台实例 id：umo 第一段就是它（用户配置的名字，不一定是 "aiocqhttp"）
+            try:
+                pid = str(getattr(platform.meta(), "id", "") or "")
+            except Exception:
+                pid = ""
+            if pid and pid not in self._bus_platform_ids:
+                self._bus_platform_ids.append(pid)
             try:
                 bot.subscribe("message_sent", self._on_self_message_bus)
                 subs.append(bot)
@@ -472,6 +487,66 @@ class AIRightsPlugin(Star):
         self._bus_bot = None
         self._bus_handler = None
 
+    def _candidate_session_keys(self, is_group: bool, session_id: str) -> list[str]:
+        """候选会话键。umo 第一段是「平台实例 id」= 用户在 AstrBot 里给平台起的名字。
+
+        实例 id 的推断来源（按可靠度）：
+        1. 管线事件里学到的 (session_id -> 真实 umo) 映射（最准）；
+        2. 本插件订阅总线时记录的平台实例 meta().id；
+        3. 学到的所有平台 id 变体；
+        4. 兜底 "aiocqhttp"。
+        """
+        mt = "GroupMessage" if is_group else "FriendMessage"
+        keys: list[str] = []
+        learned = self._seen_umo_by_session.get(f"{mt}:{session_id}")
+        if learned:
+            keys.append(learned)
+        prefixes: list[str] = []
+        for pid in list(getattr(self, "_bus_platform_ids", [])) + list(self._seen_platform_ids):
+            if pid and pid not in prefixes:
+                prefixes.append(pid)
+        prefixes.append("aiocqhttp")
+        for prefix in prefixes:
+            k = f"{prefix}:{mt}:{session_id}"
+            if k not in keys:
+                keys.append(k)
+        return keys
+
+    def _match_outbound_echo(self, text: str, umo_candidates: list[str]) -> bool:
+        """内容匹配判定「这是机器人自己刚发的回显」。
+
+        比纯时间窗可靠：守卫时间内文本与任意外发记录一致（或无法比文本）才算回显；
+        真人手打的文本不同 → 不算回显，正常触发接管。
+        """
+        guard = max(5.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
+        now = time.time()
+        while self._outbound_texts and now - self._outbound_texts[0][2] > guard:
+            self._outbound_texts.popleft()
+        if not self._outbound_texts:
+            return False
+
+        def norm(s: str) -> str:
+            return re.sub(r"\s+", "", str(s or ""))[:80]
+
+        target = norm(re.sub(r"\[CQ:[^\]]*\]", "", str(text or "")))
+        recent_same_session = any(
+            now - ts <= guard and umo in umo_candidates for umo, _t, ts in self._outbound_texts
+        )
+        if not target:
+            # 无文本（图片/表情/@ 等）：回退时间窗行为
+            return recent_same_session
+        for umo, t, ts in self._outbound_texts:
+            if now - ts > guard:
+                continue
+            nt = norm(t)
+            if not nt:
+                continue
+            # 文本一致（允许 CQ 码/空白差异用包含判断）→ 是机器人回显；
+            # 文本不同 → 是真人手打，哪怕同会话刚发过消息也要触发接管。
+            if nt == target or (len(target) >= 2 and target in nt) or (len(nt) >= 2 and nt in target):
+                return True
+        return False
+
     async def _on_self_message_bus(self, ev):
         """message_sent 事件（aiocqhttp.Event，dict 子类）：同号手机消息 → 立即接管。"""
         try:
@@ -487,25 +562,36 @@ class AIRightsPlugin(Star):
                 f"group={getter('group_id')} raw={str(getter('raw_message'))[:40]!r}"
             )
             if not self_id or sender != self_id:
+                self._bus_last_skip = f"非自身消息（user_id={sender} != self_id={self_id}）"
                 return  # 只处理同号自身消息
             group_id = getter("group_id")
             is_group = bool(group_id)
             gid = str(group_id or sender)
-            umo = f"aiocqhttp:{'GroupMessage' if is_group else 'FriendMessage'}:{gid}"
-            if self._session_switch.get(umo, True) is False:
-                return
-            if not self._scope_allows_group(is_group, gid):
-                return
+            umo_candidates = self._candidate_session_keys(is_group, gid)
             text = str(getter("raw_message") or "").strip()
+            if self._match_outbound_echo(text, umo_candidates):
+                self._bus_last_skip = "判定为机器人自身回显（内容匹配）"
+                return  # 是机器人自己发的 → 不接管
             if text and any(text.startswith(p) for p in self._ignore_prefixes()):
+                self._bus_last_skip = "指令消息（前缀豁免）"
                 return  # 持有者在手机上发的指令不算接管
-            # 机器人自己经 API 发出的消息如果也被协议回显为 message_sent，
-            # 会紧跟在 after_message_sent 之后到达，用守卫窗口排除。
-            guard = max(1.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
-            if time.time() - self._outbound_ts.get(umo, 0.0) <= guard:
+            if not self._scope_allows_group(is_group, gid):
+                self._bus_last_skip = f"该群不在作用范围内（{gid}）"
+                return
+            # 首选「管线里真实见过的会话键」，其次按平台 id 推断的键
+            umo = umo_candidates[0]
+            for cand in umo_candidates:
+                if self._session_switch.get(cand, True) is False:
+                    continue
+                umo = cand
+                break
+            if self._session_switch.get(umo, True) is False:
+                self._bus_last_skip = f"该会话已停用插件（{umo}）"
                 return
             fresh = self._trigger_session_mute(umo)
             self._bus_events_takeover += 1
+            self._bus_last_takeover_umo = umo
+            self._bus_last_skip = ""
             logger.info(
                 f"[ai_rights] 检测到同号真人消息 → 会话静音：{umo}"
                 f"（{'新静音' if fresh else '续期'}，文字：{text[:30]!r}）"
@@ -785,6 +871,20 @@ class AIRightsPlugin(Star):
     async def gatekeeper(self, event: AstrMessageEvent, *args, **kwargs):
         try:
             umo = self._umo(event)
+            # 学习真实会话键：平台实例 id（umo 第一段）与 session_id -> umo 映射。
+            # 总线（message_sent）没有 AstrBot 事件对象，只能靠这里学到的键静音。
+            try:
+                parts = umo.split(":", 2)
+                if len(parts) == 3:
+                    self._seen_platform_ids.add(parts[0])
+                    sid = str(event.get_session_id() or "")
+                    if sid:
+                        self._seen_umo_by_session[f"{parts[1]}:{sid}"] = umo
+                        if len(self._seen_umo_by_session) > 500:
+                            for k in list(self._seen_umo_by_session)[:100]:
+                                self._seen_umo_by_session.pop(k, None)
+            except Exception:
+                pass
             if self._session_switch.get(umo, True) is False:
                 return
             if not self._scope_allows(event, umo):
@@ -803,7 +903,9 @@ class AIRightsPlugin(Star):
             if not is_admin and self._is_blacklisted(umo, sender):
                 if bool(getattr(event, "is_at_or_wake_command", False)):
                     self._stat_inc("block", sender)
-                event.should_call_llm(False)
+                # 注意：should_call_llm(True) = 禁止 LLM（管线闸门是 not event.call_llm，
+                # 默认 False 放行；变量名有误导性，官方测试 tests/test_process_stage_images.py 为准）
+                event.should_call_llm(True)
                 return
 
             # 1. 真人接管触发（名单命中或同号自发回显，由 _is_real_person_event 判定）
@@ -844,7 +946,7 @@ class AIRightsPlugin(Star):
                 self._prune_expired()
             suppressed, notice = self._verdict(event, umo, sender, text, is_admin)
             if suppressed:
-                event.should_call_llm(False)
+                event.should_call_llm(True)
                 if notice:
                     try:
                         await event.send(MessageChain().message(notice))
@@ -858,7 +960,7 @@ class AIRightsPlugin(Star):
                 and self._cfg_get("relevance_gate_enabled", False)
                 and llm_verdict.get("should_answer") is False
             ):
-                event.should_call_llm(False)
+                event.should_call_llm(True)
                 self._stat_inc("skipped", sender)
 
             # 6. 记录会话话题上下文，供下一条消息判断是否跑题
@@ -903,7 +1005,19 @@ class AIRightsPlugin(Star):
     @filter.after_message_sent(priority=-10000)
     async def note_outbound(self, event: AstrMessageEvent, *args, **kwargs):
         try:
-            self._outbound_ts[self._umo(event)] = time.time()
+            umo = self._umo(event)
+            self._outbound_ts[umo] = time.time()
+            # 记录外发文本：同号模式下 message_sent 回显靠内容匹配排除，
+            # 避免"AI 刚说完话后真人紧接着发言"被时间窗误吞。
+            try:
+                result = event.get_result()
+                text = result.get_plain_text() if result is not None else ""
+            except Exception:
+                text = ""
+            if text:
+                self._outbound_texts.append((umo, str(text), time.time()))
+                while len(self._outbound_texts) > 50:
+                    self._outbound_texts.popleft()
         except Exception:
             pass
 
@@ -965,7 +1079,7 @@ class AIRightsPlugin(Star):
     @filter.command("AI人权", alias={"人权状态", "ai_rights"})
     async def ai_rights_overview(self, event: AstrMessageEvent, action: str = ""):
         """查看本会话 AI 人权总览；/AI人权 帮助 查看指令速查。"""
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         if str(action or "").strip() in ("帮助", "help", "Help", "?", "？", "指令"):
             yield event.plain_result(HELP_TEXT)
             return
@@ -973,7 +1087,7 @@ class AIRightsPlugin(Star):
 
     @filter.command("真人状态")
     async def real_person_status(self, event: AstrMessageEvent):
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         left = self._session_mute_left(self._umo(event))
         ids = self._real_person_ids()
         mode = "同号模式（自发回显）+ " if self._cfg_get("include_self_message", False) else ""
@@ -1027,7 +1141,7 @@ class AIRightsPlugin(Star):
     @filter.command("作用范围", alias={"群范围", "人权范围"})
     async def scope_cmd(self, event: AstrMessageEvent):
         """查看/设置插件在哪些群聊开启。"""
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         toks = self._args(event, "作用范围", "群范围", "人权范围")
         if not toks:
             yield event.plain_result(self._scope_view_text())
@@ -1077,7 +1191,7 @@ class AIRightsPlugin(Star):
 
     @filter.command("骚扰状态")
     async def harass_status(self, event: AstrMessageEvent):
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         yield event.plain_result(self._session_status_text(event))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -1101,7 +1215,7 @@ class AIRightsPlugin(Star):
     # ------------------------------------------------------------------
     @filter.command("黑名单", alias={"人权黑名单"})
     async def blacklist_view(self, event: AstrMessageEvent):
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         umo = self._umo(event)
         g = sorted(self._blacklist_global)
         s = sorted(self._blacklist_sessions.get(umo, set()))
@@ -1159,7 +1273,7 @@ class AIRightsPlugin(Star):
     # ------------------------------------------------------------------
     @filter.command("申诉", alias={"人权申诉"})
     async def appeal_submit(self, event: AstrMessageEvent):
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         umo = self._umo(event)
         uid = str(event.get_sender_id() or "")
         toks = self._args(event, "申诉", "人权申诉")
@@ -1198,7 +1312,7 @@ class AIRightsPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("申诉列表")
     async def appeal_list(self, event: AstrMessageEvent):
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         pending = self._pending_appeals()
         if not pending:
             yield event.plain_result("没有待处理的申诉。")
@@ -1268,7 +1382,7 @@ class AIRightsPlugin(Star):
     # ------------------------------------------------------------------
     @filter.command("人权年报", alias={"人权日报"})
     async def rights_report(self, event: AstrMessageEvent):
-        event.should_call_llm(False)
+        event.should_call_llm(True)
         yield event.plain_result(self._report_text(0) + "\n\n" + self._report_text(1))
 
     # ------------------------------------------------------------------

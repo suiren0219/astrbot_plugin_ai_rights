@@ -3,6 +3,24 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [2.9.0] - 2026-10-02
+
+### 修复（本插件最严重的 bug）
+- **`should_call_llm` 参数方向反了**：AstrBot 管线的闸门是 `not event.call_llm`，
+  即 **`True` = 禁止默认 LLM 请求**、`False`（默认值）= 放行（官方证据：
+  `tests/test_process_stage_images.py` 中 `event.call_llm = True` 时默认 LLM 被跳过；
+  变量名有误导性）。此前所有版本传的都是 `False`，等同于**空操作**——静音状态正确记录、
+  日志正常打印，但 AI 从未真正被拦，这才是「真人接管后 AI 照样抢答」的最终根因。
+  现已全部修正为 `should_call_llm(True)`（11 处调用点），并加语义锚测试锁定方向
+- **同号接管会话键修正**：umo 第一段是「平台实例 id」（用户在 AstrBot 里配置的名字），
+  此前硬编码 `aiocqhttp:` 前缀导致静音记在永远查不到的键上。现在优先使用管线中
+  学到真实键，其次按平台实例 meta().id 推断
+- **回显守卫改为内容匹配**：不再用纯时间窗（旧逻辑会把"AI 刚发完言后真人紧接着说的话"
+  误判为回显而跳过）。同文本=机器人回显，异文本=真人手打必触发；无文本才回退时间窗
+
+### 诊断
+- `/AI人权` 新增最近一次跳过原因与接管键，定位问题不用再猜
+
 ## [2.8.1] - 2026-10-02
 
 ### 修复
@@ -141,6 +159,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[2.9.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.9.0
 [2.8.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.1
 [2.8.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.0
 [2.7.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.7.2
