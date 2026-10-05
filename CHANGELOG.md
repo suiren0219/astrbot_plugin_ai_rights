@@ -3,6 +3,20 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.2.0] - 2026-10-02
+
+### 新增
+- **接管期间固定回复（提示词自定义）**：真人接管静音期间，别人 @ 机器人时回一句可自定义的
+  固定提示（默认「（主人正在亲自回复，请稍等哦～）」），而不是完全无声
+  - `takeover_reply_enabled`：开关，默认关
+  - `takeover_reply_text`：提示词文本，自由定制
+  - `takeover_reply_cooldown`：同一会话两条回复的最小间隔（默认 120 秒，防刷屏）
+- 只对他人消息生效：持有者自己（同号）的消息不会收到回复；面板设置页可直接编辑
+
+### 文档
+- 补充说明卸载对话框两个勾选项（配置文件 / 持久化数据）分别删除什么路径，
+  以及本插件状态文件 `data/config/ai_rights_state.json` 的位置
+
 ## [3.1.1] - 2026-10-02
 
 ### 文档
@@ -193,6 +207,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.2.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.0
 [3.1.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.1
 [3.1.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.0
 [3.0.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.0.0

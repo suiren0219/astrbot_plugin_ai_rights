@@ -179,9 +179,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.1.1")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.2.0")
 class AIRightsPlugin(Star):
-    version = "v3.1.1"
+    version = "v3.2.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -230,6 +230,7 @@ class AIRightsPlugin(Star):
         self._bus_events_takeover = 0      # 其中触发接管的计数
         self._bus_last_event_ts = 0.0      # 最近一条 message_sent 时间
         self._bus_last_skip = ""           # 最近一次未触发原因（诊断）
+        self._takeover_reply_ts: dict = {}  # umo -> 最近一次接管固定回复时间（冷却用）
         self._bus_last_takeover_umo = ""   # 最近一次触发的会话键（诊断）
         self._seen_platform_ids: set = set()   # 管线中观察到的平台实例 id
         self._seen_umo_by_session: dict = {}   # session_id -> 真实 umo（管线里学到的）
@@ -1165,6 +1166,26 @@ class AIRightsPlugin(Star):
                         await event.send(MessageChain().message(notice))
                     except Exception as e:
                         logger.warning(f"[ai_rights] 冷处理提示发送失败: {e}")
+
+            # 接管期间的固定回复：真人接管静音时，他人 @ 机器人回一句可自定义的提示，
+            # 而不是完全无声。不回复持有者自己的消息（同号消息不自己答自己）。
+            if (
+                suppressed and self._session_mute_left(umo) > 0
+                and sender and sender != self_id and not is_admin
+                and text and not any(text.startswith(p) for p in self._ignore_prefixes())
+                and self._cfg_get("takeover_reply_enabled", False)
+            ):
+                cd = max(0, _to_int(self._cfg_get("takeover_reply_cooldown", 120), 120))
+                now = time.time()
+                if now - self._takeover_reply_ts.get(umo, 0.0) >= cd:
+                    self._takeover_reply_ts[umo] = now
+                    rtext = str(self._cfg_get("takeover_reply_text", "") or "").strip()
+                    if rtext:
+                        try:
+                            self._note_own_send(umo, rtext)
+                            await event.send(MessageChain().message(rtext))
+                        except Exception as e:
+                            logger.warning(f"[ai_rights] 接管固定回复发送失败: {e}")
 
             # 5. 话题守护：无意义算数/测试灌水/严重跑题的消息不值得 AI 回
             #    （明确不拦 NSFW——只看有没有意义、是否跑题）

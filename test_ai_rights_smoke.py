@@ -879,6 +879,49 @@ async def _run_v11(mod, state_path):
     check("terminate 还原 _handle_event", bot._handle_event is not None and not getattr(bot, "_ai_rights_raw_hooked", False))
 
 
+async def _run_v12(mod, state_path):
+    """v3.2 接管固定回复：静音期他人@回复自定义提示词（冷却/不回复自己/开关）。"""
+    mod.STATE_PATH = state_path
+    ctx = FakeWebContext()
+    cfg = {"persist_state": True, "real_person_ids": "10086",
+           "self_message_takeover": True, "takeover_reply_enabled": True,
+           "takeover_reply_text": "（主人在线，稍等）", "takeover_reply_cooldown": 120}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    umo = "aiocqhttp:GroupMessage:933001"
+
+    # 持有者手机接管
+    await p.gatekeeper(FakeEvent(sender="10086", self_id="10086", text="我接管",
+                                 raw={"post_type": "message"}, wake=False, umo=umo))
+    check("持有者接管后静音", p._session_mute_left(umo) > 0)
+
+    # 群友 @ 机器人 → 被拦 + 收到固定提示
+    ev_a = FakeEvent(sender="7002", text="@机器人 来玩", wake=True, umo=umo)
+    await p.gatekeeper(ev_a)
+    check("接管期他人@被拦", ev_a.call_llm is True)
+    check("收到自定义固定回复", any("主人在线" in c.text for c in ev_a.sent))
+
+    # 冷却期内第二次 @ → 不重复回复
+    ev_b = FakeEvent(sender="7002", text="@机器人 再来", wake=True, umo=umo)
+    await p.gatekeeper(ev_b)
+    check("冷却期内不重复回复", not any("主人在线" in c.text for c in ev_b.sent))
+
+    # 持有者自己（同号）消息 → 不回复固定提示（不自己答自己）
+    p._takeover_reply_ts.clear()
+    ev_self = FakeEvent(sender="10086", self_id="10086", text="我自己说话",
+                        raw={"post_type": "message"}, wake=True, umo=umo)
+    await p.gatekeeper(ev_self)
+    check("不回复持有者自己的消息", not any("主人在线" in c.text for c in ev_self.sent))
+
+    # 关闭开关 → 完全静默
+    p.config["takeover_reply_enabled"] = False
+    ev_c = FakeEvent(sender="7002", text="@机器人 嗨", wake=True, umo=umo)
+    await p.gatekeeper(ev_c)
+    check("开关关闭后完全静默", ev_c.call_llm is True and not any("主人在线" in c.text for c in ev_c.sent))
+
+    await p.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1090,7 +1133,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v3.1", meta is not None and "v3.1" in meta[3])
+        check("@register 版本号是 v3.2", meta is not None and "v3.2" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -1143,6 +1186,9 @@ def main():
 
         print("== 原始层拦截（v3.1 raw payload）==")
         asyncio.run(_run_v11(mod, os.path.join(os.path.dirname(state_path), "state_v11.json")))
+
+        print("== 接管固定回复（v3.2 提示词自定义）==")
+        asyncio.run(_run_v12(mod, os.path.join(os.path.dirname(state_path), "state_v12.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

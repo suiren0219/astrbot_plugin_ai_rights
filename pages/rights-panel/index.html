@@ -590,7 +590,9 @@ const GROUPS = [
   ["真人接管（老板键）", [
     ["real_person_ids","textarea"],["self_message_takeover","switch"],["include_self_message","switch"],["self_echo_guard_seconds","number"],
     ["mute_minutes","number"],["refresh_on_each_message","switch"],["notify_on_real_person","switch"],
-    ["notify_text_real_person","text"],["trigger_ignore_prefixes","text"],
+    ["notify_text_real_person","text"],
+    ["takeover_reply_enabled","switch"],["takeover_reply_text","text"],["takeover_reply_cooldown","number"],
+    ["trigger_ignore_prefixes","text"],
     ["suppress_scope","select",[["llm","只拦 AI 聊天回复（推荐）"],["all","连插件指令一起拦（慎用）"]]],
   ]],
   ["AI 反骚扰", [

@@ -63,6 +63,24 @@
     "default": "（AI 暂时退下，真人接管中…）",
     "hint": "仅在「真人接管时提示」开启时使用。"
   },
+  "takeover_reply_enabled": {
+    "description": "接管期间被 @ 时回复一句固定提示",
+    "type": "bool",
+    "default": false,
+    "hint": "真人接管静音期间，别人 @ 机器人时回这句固定提示（如「主人正在亲自回复，请稍等」），而不是完全无声。只对他人消息生效，不会回复你自己；带会话冷却防止刷屏。"
+  },
+  "takeover_reply_text": {
+    "description": "接管期间的固定回复文本（提示词）",
+    "type": "string",
+    "default": "（主人正在亲自回复，请稍等哦～）",
+    "hint": "可自由改成你的风格，支持任意文案。留空则不回复。"
+  },
+  "takeover_reply_cooldown": {
+    "description": "固定回复的会话冷却（秒）",
+    "type": "int",
+    "default": 120,
+    "hint": "同一会话两条固定回复之间的最小间隔，防止刷屏。"
+  },
   "trigger_ignore_prefixes": {
     "description": "不算真人闲聊的指令前缀",
     "type": "string",

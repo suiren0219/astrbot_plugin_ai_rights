@@ -206,7 +206,7 @@ class PageApi:
         day = time.strftime("%Y-%m-%d")
         stats = p._stats.get(day) or {}
         return _ok({
-            "plugin": {"name": PLUGIN_NAME, "version": _as_str(getattr(p, "version", "v3.1.1"))},
+            "plugin": {"name": PLUGIN_NAME, "version": _as_str(getattr(p, "version", "v3.2.0"))},
             "now": int(now),
             "session_mutes": session_mutes,
             "user_mutes": user_mutes,
