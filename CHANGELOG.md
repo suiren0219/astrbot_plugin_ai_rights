@@ -3,6 +3,20 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.1.0] - 2026-10-02
+
+### 修复（找到「事件收不到」的库层根因）
+- **原始 payload 层拦截**：aiocqhttp 1.4.4 的 `Event.from_payload` 按 `f"{post_type}_type"`
+  取 detail_type——`message_sent` 事件因此要求 `message_sent_type` 字段，而 NapCat 实际上传的是
+  `message_type`。字段缺失时 `from_payload` 返回 None，**事件在库层被静默丢弃**，事件总线订阅
+  永远收不到。现在插件在 `bot._handle_event` 外包一层，在库做任何推断之前就拿到原始 payload；
+  同时给 `Event.from_payload` 打兼容补丁（双保险）
+- **诊断升级**：区分「从未收到 message_sent」并直接提示去 NapCat 网络配置开启
+  **reportSelfMessage**（经查 NapCat 源码 `config.ts`，该开关默认 false，必须手动打开）
+
+### 测试
+- 新增 FakeRawBot 原始层测试：直接注入 payload 验证接管、回显排除、透传、防重复标记、退订还原
+
 ## [3.0.0] - 2026-10-02
 
 ### 新增
@@ -171,6 +185,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.1.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.0
 [3.0.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.0.0
 [2.9.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.9.0
 [2.8.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.8.1

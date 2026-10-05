@@ -176,9 +176,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.0.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.1.0")
 class AIRightsPlugin(Star):
-    version = "v3.0.0"
+    version = "v3.1.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -232,6 +232,8 @@ class AIRightsPlugin(Star):
         self._seen_umo_by_session: dict = {}   # session_id -> 真实 umo（管线里学到的）
         self._outbound_texts: deque = deque()  # (umo, 文本, 时间) 机器人最近外发文本
         self._bus_platform_ids: list = []      # 订阅总线时记录的平台实例 id
+        self._raw_counts: dict = {}            # 原始 payload 计数（post_type -> n，诊断用）
+        self._raw_hooked_bots: list = []       # 已安装原始层拦截的 bot
 
     # ------------------------------------------------------------------
     # 配置读取
@@ -493,6 +495,7 @@ class AIRightsPlugin(Star):
         self._bus_hook_tried = time.time()
         if not (self._cfg_get("include_self_message", False) or self._cfg_get("self_message_takeover", True)):
             return  # 两个开关都关着，不必浪费订阅
+        self._patch_event_from_payload()   # 让库不丢 message_sent 事件
         subs = getattr(self, "_bus_bots", None)
         if subs is None:
             subs = []
@@ -500,7 +503,7 @@ class AIRightsPlugin(Star):
         found = False
         for platform in self._iter_platform_insts():
             bot = getattr(platform, "bot", None)
-            if bot is None or not hasattr(bot, "subscribe"):
+            if bot is None:
                 continue
             # 记录平台实例 id：umo 第一段就是它（用户配置的名字，不一定是 "aiocqhttp"）
             try:
@@ -509,6 +512,11 @@ class AIRightsPlugin(Star):
                 pid = ""
             if pid and pid not in self._bus_platform_ids:
                 self._bus_platform_ids.append(pid)
+            # 第一层（最可靠）：原始 payload 拦截，不依赖库的任何推断
+            if self._install_raw_hook(bot):
+                found = True
+            if not hasattr(bot, "subscribe"):
+                continue
             try:
                 bot.subscribe("message_sent", self._on_self_message_bus)
                 subs.append(bot)
@@ -516,15 +524,15 @@ class AIRightsPlugin(Star):
             except Exception as e:
                 logger.debug(f"[ai_rights] 订阅 message_sent 失败（跳过该实例）: {e}")
         if found:
-            self._bus_bot = subs[0]
+            self._bus_bot = subs[0] if subs else (self._raw_hooked_bots or [None])[0]
             self._bus_handler = self._on_self_message_bus
             logger.info(
-                f"[ai_rights] 已订阅 message_sent 事件总线 ×{len(subs)}（同号手机接管已启用）。"
+                f"[ai_rights] 同号接管就绪：总线订阅 ×{len(subs)}、原始层拦截 ×{len(self._raw_hooked_bots)}。"
             )
         else:
             logger.info(
-                "[ai_rights] 未找到带事件总线的 aiocqhttp 平台实例；"
-                "若你使用同号模式，请确认 AstrBot 版本与协议端（NapCat reportSelfMessage）。"
+                "[ai_rights] 未找到 aiocqhttp 平台实例；"
+                "若你使用同号模式，请确认 AstrBot 使用 aiocqhttp 适配器（NapCat reportSelfMessage）。"
             )
 
     def _unhook_self_message_bus(self):
@@ -534,9 +542,149 @@ class AIRightsPlugin(Star):
                 bot.unsubscribe("message_sent", handler)
             except Exception:
                 pass
+        for bot in getattr(self, "_raw_hooked_bots", None) or []:
+            try:
+                bot._handle_event = bot._ai_rights_orig_handle_event
+                bot._ai_rights_raw_hooked = False
+            except Exception:
+                pass
         self._bus_bots = []
+        self._raw_hooked_bots = []
         self._bus_bot = None
         self._bus_handler = None
+
+    def _install_raw_hook(self, bot) -> bool:
+        """在 bot 实例上包一层 _handle_event，直接拦截原始 payload。
+
+        这是最可靠的一层：aiocqhttp 1.4.4 的 Event.from_payload 要求 message_sent
+        事件带 message_sent_type 字段（按 f'{post_type}_type' 取），而协议端上传的
+        是 message_type——缺字段会让 from_payload 返回 None，事件在库层被静默丢弃，
+        事件总线订阅根本收不到。这里直接在原始 payload 层处理，绕过库的所有推断。
+        """
+        if getattr(bot, "_ai_rights_raw_hooked", False):
+            return True
+        orig = getattr(bot, "_handle_event", None)
+        if not callable(orig):
+            return False
+
+        async def _wrapped(payload, _orig=orig):
+            try:
+                await self._on_raw_payload(payload)
+            except Exception as e:
+                logger.warning(f"[ai_rights] 原始事件拦截异常: {e}")
+            return await _orig(payload)
+
+        try:
+            bot._handle_event = _wrapped
+            bot._ai_rights_raw_hooked = True
+            bot._ai_rights_orig_handle_event = orig
+        except Exception as e:
+            logger.debug(f"[ai_rights] 安装原始事件拦截失败: {e}")
+            return False
+        self._raw_hooked_bots.append(bot)
+        return True
+
+    async def _on_raw_payload(self, payload) -> None:
+        """原始 payload 级处理：与事件总线无关，专治 message_sent 在库层被丢弃。"""
+        if not isinstance(payload, dict):
+            return
+        post_type = str(payload.get("post_type") or "").strip().lower()
+        if post_type:
+            self._raw_counts[post_type] = self._raw_counts.get(post_type, 0) + 1
+        if post_type != "message_sent":
+            return
+        if payload.get("_ai_rights_raw_handled"):
+            return  # 已处理过（防 from_payload 补丁与原始层双重触发）
+        if not (self._cfg_get("include_self_message", False) or self._cfg_get("self_message_takeover", True)):
+            return
+        self_id = str(payload.get("self_id") or "")
+        user_id = str(payload.get("user_id") or "")
+        self._bus_events_seen += 1
+        self._bus_last_event_ts = time.time()
+        if not self_id or user_id != self_id:
+            self._bus_last_skip = f"非自身消息（user_id={user_id} != self_id={self_id}）"
+            return
+        payload["_ai_rights_raw_handled"] = True
+        group_id = payload.get("group_id")
+        mt = str(payload.get("message_type") or "").strip().lower()
+        is_group = bool(group_id) or mt == "group"
+        gid = str(group_id or user_id)
+        text = str(payload.get("raw_message") or "").strip()
+        await self._handle_self_takeover(is_group, gid, text, source="原始层")
+
+    def _patch_event_from_payload(self) -> bool:
+        """兼容 shim：让 aiocqhttp 的 Event 接受 message_sent 事件。
+
+        aiocqhttp 1.4.4 的 Event.detail_type = payload[f'{post_type}_type']，
+        message_sent 事件因此要求 message_sent_type 字段；而协议端上传的是
+        message_type，缺字段时 from_payload 返回 None，事件在库层被静默丢弃。
+        这里补字段后再走原逻辑；即使本补丁失效，原始层拦截也已兜底。
+        """
+        try:
+            from aiocqhttp import Event
+        except Exception:
+            return False
+        if getattr(Event.from_payload, "_ai_rights_patched", False):
+            return True
+
+        def _patched(payload):
+            try:
+                data = payload
+                if isinstance(data, dict) and str(data.get("post_type") or "").strip().lower() == "message_sent" \
+                        and "message_sent_type" not in data:
+                    data = dict(data)
+                    data["message_sent_type"] = str(data.get("message_type") or ("group" if data.get("group_id") else "private"))
+                e = Event(data)
+                _ = e.type, e.detail_type
+                return e
+            except KeyError:
+                return None
+
+        _patched._ai_rights_patched = True
+        try:
+            Event.from_payload = staticmethod(_patched)
+        except Exception as e:
+            logger.debug(f"[ai_rights] Event.from_payload 补丁失败: {e}")
+            return False
+        return True
+
+    async def _handle_self_takeover(self, is_group: bool, gid: str, text: str, source: str = "总线") -> None:
+        """同号手机消息的统一接管处理（原始层与总线层共用）。"""
+        umo_candidates = self._candidate_session_keys(is_group, gid)
+        text = (text or "").strip()
+        if self._looks_like_own_outbound(umo_candidates[0], text) or self._match_outbound_echo(text, umo_candidates):
+            self._bus_last_skip = "判定为机器人自身回显（内容匹配）"
+            return
+        if text and any(text.startswith(p) for p in self._ignore_prefixes()):
+            self._bus_last_skip = "指令消息（前缀豁免）"
+            return
+        if not self._scope_allows_group(is_group, gid):
+            self._bus_last_skip = f"该群不在作用范围内（{gid}）"
+            return
+        umo = umo_candidates[0]
+        for cand in umo_candidates:
+            if self._session_switch.get(cand, True) is False:
+                continue
+            umo = cand
+            break
+        if self._session_switch.get(umo, True) is False:
+            self._bus_last_skip = f"该会话已停用插件（{umo}）"
+            return
+        fresh = self._trigger_session_mute(umo)
+        self._bus_events_takeover += 1
+        self._bus_last_takeover_umo = umo
+        self._bus_last_skip = ""
+        logger.info(
+            f"[ai_rights] 检测到同号真人消息 → 会话静音：{umo}"
+            f"（{source}，{'新静音' if fresh else '续期'}，文字：{text[:30]!r}）"
+        )
+        if fresh and self._cfg_get("notify_on_real_person", False):
+            notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
+            try:
+                self._note_own_send(umo, notice)
+                await self.context.send_message(umo, MessageChain().message(notice))
+            except Exception as e:
+                logger.debug(f"[ai_rights] 同号接管提示发送失败: {e}")
 
     def _candidate_session_keys(self, is_group: bool, session_id: str) -> list[str]:
         """候选会话键。umo 第一段是「平台实例 id」= 用户在 AstrBot 里给平台起的名字。
@@ -601,6 +749,13 @@ class AIRightsPlugin(Star):
     async def _on_self_message_bus(self, ev):
         """message_sent 事件（aiocqhttp.Event，dict 子类）：同号手机消息 → 立即接管。"""
         try:
+            raw_done = False
+            if hasattr(ev, "get"):
+                raw_done = bool(ev.get("_ai_rights_raw_handled"))
+            else:
+                raw_done = bool(getattr(ev, "_ai_rights_raw_handled", False))
+            if raw_done:
+                return  # 原始层已处理过，避免重复计数/通知
             if not (self._cfg_get("include_self_message", False) or self._cfg_get("self_message_takeover", True)):
                 return
             getter = ev.get if hasattr(ev, "get") else (lambda k, d=None: getattr(ev, k, d))
@@ -1116,19 +1271,23 @@ class AIRightsPlugin(Star):
         """同号接管诊断：一眼看清钩子/开关/事件流是否正常。"""
         enabled = bool(self._cfg_get("self_message_takeover", True)) or bool(self._cfg_get("include_self_message", False))
         hooks = len(getattr(self, "_bus_bots", None) or [])
+        raw_hooks = len(getattr(self, "_raw_hooked_bots", None) or [])
+        ms_raw = _to_int(self._raw_counts.get("message_sent", 0), 0)
         if not enabled:
             return "同号接管：未开启（开启 self_message_takeover 后，手机发的消息会让本会话静音）"
-        if hooks <= 0:
-            return "同号接管：已配置但未挂上事件总线 ⚠️（请确认 AstrBot 使用 aiocqhttp 适配器）"
-        if self._bus_events_seen <= 0:
+        if hooks <= 0 and raw_hooks <= 0:
+            return "同号接管：已配置但未挂上平台 ⚠️（请确认 AstrBot 使用 aiocqhttp 适配器）"
+        if ms_raw <= 0 and self._bus_events_seen <= 0:
             return (
-                f"同号接管：总线已挂 ×{hooks}，尚未收到 message_sent 事件 ⚠️ "
-                "请确认协议端（NapCat 等）已开启「上报自身消息 reportSelfMessage」"
+                f"同号接管：已就绪（原始层 ×{raw_hooks}），但从未收到自身消息事件 ⚠️\n"
+                "  → 请在 NapCat 网络配置里，给连接 AstrBot 的那个 WebSocket 通道开启\n"
+                "    「上报自身消息 reportSelfMessage」（默认是关闭的！），然后重载插件"
             )
         ago = time.time() - self._bus_last_event_ts
+        extra = f"；最近跳过：{self._bus_last_skip}" if self._bus_last_skip else ""
         return (
-            f"同号接管：总线 ×{hooks}，收到自身消息事件 {self._bus_events_seen} 条"
-            f"（最近 {ago:.0f} 秒前），触发接管 {self._bus_events_takeover} 次"
+            f"同号接管：收到自身消息事件 {self._bus_events_seen} 条"
+            f"（最近 {ago:.0f} 秒前），触发接管 {self._bus_events_takeover} 次" + extra
         )
 
     @filter.command("AI人权", alias={"人权状态", "ai_rights"})

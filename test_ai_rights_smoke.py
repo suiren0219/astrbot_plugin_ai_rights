@@ -244,6 +244,19 @@ class FakeBot:
             self.subs[event_name].remove(func)
 
 
+class FakeRawBot(FakeBot):
+    """模拟真实 CQHttp 实例：有 _handle_event（async），供原始层包装。"""
+
+    def __init__(self):
+        super().__init__()
+        self.passed = []
+        self.hooked = False
+
+    async def _handle_event(self, payload):
+        self.passed.append(payload)
+        return None
+
+
 class FakeWebContext(FakeContext):
     """带 register_web_api 和 provider_manager 的 Context 桩（WebUI 面板用）。"""
 
@@ -820,6 +833,52 @@ async def _run_v10(mod, state_path):
     await p.terminate()
 
 
+async def _run_v11(mod, state_path):
+    """v3.1 原始 payload 层拦截：绕过库的 Event.from_payload 丢弃，直接处理。"""
+    mod.STATE_PATH = state_path
+    bot = FakeRawBot()
+    ctx = FakeWebContext(bot=bot, platform_id="qq-linux-bot")
+    cfg = {"persist_state": True, "self_message_takeover": True, "include_self_message": False}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    check("原始层拦截已安装", getattr(bot, "_ai_rights_raw_hooked", False) is True)
+
+    umo = "qq-linux-bot:GroupMessage:933001"
+    payload = {"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+               "group_id": 933001, "raw_message": "手机发的接管消息", "message_type": "group"}
+    await bot._handle_event(payload)
+    check("原始层直接触发接管（不依赖库的事件推断）", p._session_mute_left(umo) > 0)
+    check("处理后打上防重复标记", payload.get("_ai_rights_raw_handled") is True)
+    check("原始事件仍透传给原处理函数", len(bot.passed) == 1)
+
+    # 静音期间别人 @ 机器人被拦
+    ev_other = FakeEvent(sender="7002", text="在吗", wake=True, umo=umo)
+    await p.gatekeeper(ev_other)
+    check("静音期间别人@机器人被拦", ev_other.call_llm is True)
+
+    # 机器人回显（内容匹配）不触发
+    p._session_mutes.pop(umo, None)
+    p._outbound_texts.append((umo, "晚安", time.time()))
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "raw_message": "晚安", "message_type": "group"})
+    check("机器人自身回显不触发", p._session_mute_left(umo) == 0)
+
+    # 非自身消息（别人的消息混入 message_sent）不触发
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 654321,
+                             "group_id": 933001, "raw_message": "别人的", "message_type": "group"})
+    check("非自身消息不触发", p._session_mute_left(umo) == 0)
+
+    # 原始计数
+    check("原始计数 message_sent=3（接管+回显+非自身各一）", p._raw_counts.get("message_sent", 0) == 3)
+
+    # 诊断包含 NapCat 提示
+    diag = p._bus_diag_text()
+    check("诊断包含 reportSelfMessage 提示或接管次数", "reportSelfMessage" in diag or "触发接管" in diag)
+
+    await p.terminate()
+    check("terminate 还原 _handle_event", bot._handle_event is not None and not getattr(bot, "_ai_rights_raw_hooked", False))
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1031,7 +1090,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v3.0", meta is not None and "v3.0" in meta[3])
+        check("@register 版本号是 v3.1", meta is not None and "v3.1" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -1081,6 +1140,9 @@ def main():
 
         print("== 同号接管开关（v3.0 self_message_takeover）==")
         asyncio.run(_run_v10(mod, os.path.join(os.path.dirname(state_path), "state_v10.json")))
+
+        print("== 原始层拦截（v3.1 raw payload）==")
+        asyncio.run(_run_v11(mod, os.path.join(os.path.dirname(state_path), "state_v11.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 
