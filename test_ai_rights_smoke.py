@@ -103,6 +103,13 @@ def _install_astrbot_stub():
             return fn
         return deco
 
+    def on_llm_response(priority=0):
+        def deco(fn):
+            fn.__is_event_hook__ = True
+            fn.__hook_priority__ = priority
+            return fn
+        return deco
+
     class MessageChain:
         def __init__(self, text=""):
             self.text = text
@@ -126,6 +133,7 @@ def _install_astrbot_stub():
         command=command,
         permission_type=permission_type,
         after_message_sent=after_message_sent,
+        on_llm_response=on_llm_response,
     )
     api_event = _install_stub(
         "astrbot.api.event",
@@ -922,6 +930,52 @@ async def _run_v12(mod, state_path):
     await p.terminate()
 
 
+async def _run_v13(mod, state_path):
+    """v3.3 统一外发记录：其他插件经 context.send_message 发的消息不再误判为真人。"""
+    mod.STATE_PATH = state_path
+    bot = FakeRawBot()
+    ctx = FakeWebContext(bot=bot, platform_id="qq-linux-bot")
+    cfg = {"persist_state": True, "self_message_takeover": True, "include_self_message": False}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    check("context.send_message 已包装", getattr(ctx, "_ai_rights_send_wrapped", False) is True)
+
+    grp = "qq-linux-bot:GroupMessage:933001"
+
+    # 场景1：其他插件经 context.send_message 主动推送 → 记录到外发账本
+    chain = types.SimpleNamespace(get_plain_text=lambda: "【定时推送】今天的数据")
+    await ctx.send_message(grp, chain)
+    check("主动推送已登记外发记录", len(p._outbound_texts) == 1)
+
+    # 该推送回显（message_sent 同文本）→ 不触发接管（修复前会误触发）
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "raw_message": "【定时推送】今天的数据",
+                             "message_type": "group"})
+    check("其他插件的推送回显不再误触发接管", p._session_mute_left(grp) == 0)
+
+    # 场景2：LLM 输出经 on_llm_response 记录 → 同文本回显也不触发
+    await p.remember_llm_output(
+        FakeEvent(sender="7002", text="q", wake=True, umo=grp),
+        types.SimpleNamespace(completion_text="这是 LLM 生成的回复", result_chain=None))
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "raw_message": "这是 LLM 生成的回复",
+                             "message_type": "group"})
+    check("LLM 输出回显不触发接管", p._session_mute_left(grp) == 0)
+
+    # 场景3：真人手打的不同内容 → 触发接管
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "raw_message": "我自己上线了",
+                             "message_type": "group"})
+    check("真人异文本触发接管", p._session_mute_left(grp) > 0)
+
+    # 管线路径：其他人的消息被静音拦住
+    ev_other = FakeEvent(sender="7002", text="在吗", wake=True, umo=grp)
+    await p.gatekeeper(ev_other)
+    check("接管后他人@被拦", ev_other.call_llm is True)
+
+    await p.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1133,7 +1187,7 @@ def main():
         mod = _load_plugin(state_path)
         meta = getattr(mod.AIRightsPlugin, "__plugin_meta__", None)
         check("@register 挂在插件类上", meta is not None and meta[0] == "ai_rights")
-        check("@register 版本号是 v3.2", meta is not None and "v3.2" in meta[3])
+        check("@register 版本号是 v3.3", meta is not None and "v3.3" in meta[3])
         check("gatekeeper 是事件钩子（priority=15000）",
               getattr(mod.AIRightsPlugin.gatekeeper, "__is_event_hook__", False)
               and getattr(mod.AIRightsPlugin.gatekeeper, "__hook_priority__", 0) == 15000)
@@ -1189,6 +1243,9 @@ def main():
 
         print("== 接管固定回复（v3.2 提示词自定义）==")
         asyncio.run(_run_v12(mod, os.path.join(os.path.dirname(state_path), "state_v12.json")))
+
+        print("== 统一外发记录（v3.3 插件推送不再误触发）==")
+        asyncio.run(_run_v13(mod, os.path.join(os.path.dirname(state_path), "state_v13.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 

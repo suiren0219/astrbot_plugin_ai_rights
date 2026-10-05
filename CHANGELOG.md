@@ -3,6 +3,18 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.3.0] - 2026-10-02
+
+### 修复（「插件生效误触发接管」）
+- **统一外发记录**：机器人账号的输出有三个来源——LLM 回复、各插件对事件的回复、
+  各插件经 `context.send_message` 的主动推送。此前第 3 类没有登记，协议端回显时
+  会被同号接管误判为真人发言。现在三条通道全部登记到同一本外发账本：
+  1. 管线发送：`after_message_sent`（原有）
+  2. **LLM 输出**：新增 `on_llm_response` 钩子记录生成文本
+  3. **主动推送**：包装 `context.send_message`，所有插件经此发出的消息都登记
+- 判定规则不变：自身消息与外发记录内容一致 = 机器人发的；不一致 = 真人接管
+- `terminate` 时还原 `context.send_message` 包装
+
 ## [3.2.0] - 2026-10-02
 
 ### 新增
@@ -207,6 +219,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.3.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.0
 [3.2.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.0
 [3.1.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.1
 [3.1.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.0

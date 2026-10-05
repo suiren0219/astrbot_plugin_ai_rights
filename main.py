@@ -179,9 +179,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.2.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.0")
 class AIRightsPlugin(Star):
-    version = "v3.2.0"
+    version = "v3.3.0"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -375,14 +375,25 @@ class AIRightsPlugin(Star):
             return "inbound"
         return "unknown"
 
+    def _remember_outbound_text(self, umo: str, text: str) -> None:
+        """统一外发记录：机器人账号发出的任何文本都登记到这里。
+
+        同号接管判定只认这本账：自身消息与记录一致 = 机器人发的；不一致 = 真人。
+        """
+        text = (text or "").strip()
+        if not umo or not text:
+            return
+        now = time.time()
+        self._outbound_texts.append((umo, text[:200], now))
+        guard = max(30.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
+        while self._outbound_texts and self._outbound_texts[0][2] < now - guard:
+            self._outbound_texts.popleft()
+
     def _note_own_send(self, umo: str, text: str) -> None:
         """插件主动发消息后登记外发记录，防止被同号接管开关误判为真人发言。"""
         try:
             self._outbound_ts[umo] = time.time()
-            if text:
-                self._outbound_texts.append((umo, str(text), time.time()))
-                while len(self._outbound_texts) > 50:
-                    self._outbound_texts.popleft()
+            self._remember_outbound_text(umo, text)
         except Exception:
             pass
 
@@ -1241,17 +1252,28 @@ class AIRightsPlugin(Star):
         try:
             umo = self._umo(event)
             self._outbound_ts[umo] = time.time()
-            # 记录外发文本：同号模式下 message_sent 回显靠内容匹配排除，
-            # 避免"AI 刚说完话后真人紧接着发言"被时间窗误吞。
             try:
                 result = event.get_result()
                 text = result.get_plain_text() if result is not None else ""
             except Exception:
                 text = ""
+            self._remember_outbound_text(umo, text)
+        except Exception:
+            pass
+
+    @filter.on_llm_response(priority=-99000)
+    async def remember_llm_output(self, event: AstrMessageEvent, resp, *args, **kwargs):
+        """记录 LLM 生成的回复文本：这是「机器人说的」最准确的账本来源。"""
+        try:
+            if resp is None:
+                return
+            text = str(getattr(resp, "completion_text", "") or "").strip()
+            if not text:
+                rc = getattr(resp, "result_chain", None)
+                if rc is not None and hasattr(rc, "get_plain_text"):
+                    text = str(rc.get_plain_text() or "").strip()
             if text:
-                self._outbound_texts.append((umo, str(text), time.time()))
-                while len(self._outbound_texts) > 50:
-                    self._outbound_texts.popleft()
+                self._remember_outbound_text(self._umo(event), text)
         except Exception:
             pass
 
@@ -1635,6 +1657,7 @@ class AIRightsPlugin(Star):
             self._report_task = asyncio.get_running_loop().create_task(self._report_loop())
             logger.info("[ai_rights] 人权日报定时推送已开启。")
         self._register_page_api()
+        self._wrap_context_send()
         self._hook_self_message_bus()
         self._first_run_hint()
         if self._cfg_get("update_check_enabled", True):
@@ -1693,6 +1716,54 @@ class AIRightsPlugin(Star):
 
         return parts(latest) > parts(current)
 
+    def _wrap_context_send(self):
+        """包装 context.send_message：所有插件经此发出的主动推送都登记外发记录。
+
+        之前只有管线内发送（after_message_sent）会被记录，其他插件的主动推送
+        回显时会被同号接管误判为真人发言。
+        """
+        ctx = self.context
+        if getattr(ctx, "_ai_rights_send_wrapped", False):
+            return
+        orig = getattr(ctx, "send_message", None)
+        if not callable(orig):
+            return
+
+        async def send_message(session, chain, *a, **k):
+            try:
+                text = ""
+                if hasattr(chain, "get_plain_text"):
+                    text = str(chain.get_plain_text() or "")
+                elif hasattr(chain, "chain"):
+                    parts = []
+                    for comp in (getattr(chain, "chain", None) or []):
+                        t = getattr(comp, "text", None)
+                        if isinstance(t, str):
+                            parts.append(t)
+                    text = "".join(parts)
+                if text:
+                    self._remember_outbound_text(str(session), text)
+            except Exception:
+                pass
+            return await orig(session, chain, *a, **k)
+
+        try:
+            ctx._ai_rights_orig_send = orig
+            ctx.send_message = send_message
+            ctx._ai_rights_send_wrapped = True
+            logger.info("[ai_rights] 已包装 context.send_message（同号接管外发记录覆盖主动推送）。")
+        except Exception as e:
+            logger.debug(f"[ai_rights] 包装 context.send_message 失败: {e}")
+
+    def _unwrap_context_send(self):
+        ctx = self.context
+        if getattr(ctx, "_ai_rights_send_wrapped", False):
+            try:
+                ctx.send_message = ctx._ai_rights_orig_send
+            except Exception:
+                pass
+            ctx._ai_rights_send_wrapped = False
+
     def _register_page_api(self):
         """注册 AstrBot 仪表盘的插件页面 API（/astrbot_plugin_ai_rights/page/*）。"""
         if register_page_api is None:
@@ -1707,6 +1778,7 @@ class AIRightsPlugin(Star):
 
     async def terminate(self):
         self._unhook_self_message_bus()
+        self._unwrap_context_send()
         tasks = [t for t in (self._report_task, self._save_task, self._update_task) if t is not None]
         for t in tasks:
             t.cancel()
