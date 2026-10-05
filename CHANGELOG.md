@@ -15,6 +15,18 @@
 - 判定规则不变：自身消息与外发记录内容一致 = 机器人发的；不一致 = 真人接管
 - `terminate` 时还原 `context.send_message` 包装
 
+## [3.2.2] - 2026-10-02
+
+### 修复（插件市场审核要求）
+- **持久化位置规范化**：状态文件从 `data/config/ai_rights_state.json` 迁移到
+  `data/plugin_data/astrbot_plugin_ai_rights/state.json`（符合插件市场「持久化数据必须
+  存放在 data/plugin_data/<plugin_name>/」的规则）
+- **一次性自动迁移**：检测到旧位置的状态文件时自动迁到新位置并删除旧文件
+  （静音、黑名单、申诉、统计全部无缝保留，升级无需任何手动操作）
+- 附带效果：AstrBot 卸载对话框的「同时删除插件持久化数据」勾选现在能正确删除本插件
+  的全部运行状态（此前状态文件不在标准目录，勾选也删不到）
+- README 状态文件路径说明同步更新
+
 ## [3.2.1] - 2026-10-02
 
 ### 修复（「AI 对自己私聊一直发消息」的自激循环）
@@ -233,6 +245,7 @@
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
 [3.3.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.0
+[3.2.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.2
 [3.2.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.1
 [3.2.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.0
 [3.1.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.1

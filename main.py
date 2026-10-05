@@ -45,6 +45,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 from collections import deque
 from datetime import date, datetime, timedelta
@@ -62,7 +63,8 @@ except Exception:  # 兼容被当作单文件加载的场景
         _WEBUI_PLUGIN_NAME = "astrbot_plugin_ai_rights"
         register_page_api = None
 
-STATE_PATH = os.path.join("data", "config", "ai_rights_state.json")
+STATE_PATH = os.path.join("data", "plugin_data", "astrbot_plugin_ai_rights", "state.json")
+LEGACY_STATE_PATH = os.path.join("data", "config", "ai_rights_state.json")  # 旧版位置（v3.2.2 起迁移到新位置并删除）
 STATE_VERSION = 2
 MAX_APPEALS = 100
 STAT_KEEP_DAYS = 30
@@ -1843,6 +1845,16 @@ class AIRightsPlugin(Star):
     def _load_state(self):
         if not self._cfg_get("persist_state", True):
             return
+        # 一次性迁移：插件市场规范要求持久化数据放在 data/plugin_data/<plugin_name>/ 下。
+        # 旧版状态文件在 data/config/ai_rights_state.json，读到新位置后删除旧文件。
+        try:
+            if not os.path.isfile(STATE_PATH) and os.path.isfile(LEGACY_STATE_PATH):
+                os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+                shutil.copy2(LEGACY_STATE_PATH, STATE_PATH)
+                os.remove(LEGACY_STATE_PATH)
+                logger.info("[ai_rights] 已将状态文件迁移到 data/plugin_data/astrbot_plugin_ai_rights/state.json（旧文件已清理）")
+        except Exception as e:
+            logger.warning(f"[ai_rights] 状态文件迁移失败（忽略，按全新状态运行）：{e}")
         try:
             if not os.path.isfile(STATE_PATH):
                 self._fresh_install = True

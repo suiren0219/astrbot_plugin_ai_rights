@@ -12,6 +12,7 @@ import importlib.util
 import os
 import sys
 import tempfile
+import json
 import time
 import types
 
@@ -1033,6 +1034,31 @@ async def _run_v14(mod, state_path):
     await p.terminate()
 
 
+async def _run_v15(mod, state_path):
+    """v3.2.2 持久化迁移：旧 data/config/ 状态文件自动迁到 data/plugin_data/ 并清理。"""
+    mod.STATE_PATH = state_path
+    legacy = os.path.join(os.path.dirname(state_path), "old_config")
+    os.makedirs(legacy, exist_ok=True)
+    mod.LEGACY_STATE_PATH = os.path.join(legacy, "ai_rights_state.json")
+    # 旧版状态文件（含黑名单、静音）
+    with open(mod.LEGACY_STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump({"session_mutes": {"u:G:1": {"expire": time.time() + 600, "updated": time.time()}},
+                   "blacklist_global": ["999"]}, f)
+    ctx = FakeWebContext()
+    p = mod.AIRightsPlugin(ctx, {"persist_state": True})
+    await p.initialize()
+    check("旧状态文件已迁移到新位置", os.path.isfile(state_path))
+    check("旧状态文件已清理", not os.path.isfile(mod.LEGACY_STATE_PATH))
+    check("迁移后静音状态可用", p._session_mute_left("u:G:1") > 0)
+    check("迁移后黑名单可用", "999" in p._blacklist_global)
+    # 幂等：第二次 initialize 不重复迁移、不报错
+    await p.terminate()
+    p2 = mod.AIRightsPlugin(ctx, {"persist_state": True})
+    await p2.initialize()
+    check("迁移幂等（新文件存在时不重复处理）", os.path.isfile(state_path) and not os.path.isfile(mod.LEGACY_STATE_PATH))
+    await p2.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1306,6 +1332,9 @@ def main():
 
         print("== 自言自语循环修复（v3.2.1 铁律）==")
         asyncio.run(_run_v14(mod, os.path.join(os.path.dirname(state_path), "state_v14.json")))
+
+        print("== 持久化迁移（v3.2.2 市场规范）==")
+        asyncio.run(_run_v15(mod, os.path.join(os.path.dirname(state_path), "state_v15.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 
