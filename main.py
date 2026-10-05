@@ -82,7 +82,10 @@ HELP_TEXT = """📖 做人 · 指令速查
 /人权年报
 ━━ 开关 ━━
 话题守护/同号模式/LLM 裁量 在 WebUI 插件配置里开启
-WebUI → 插件 → 做人 → 面板 可视化管理一切"""
+WebUI → 插件 → 做人 → 面板 可视化管理一切
+━━ 同号模式必做 ━━
+NapCat 网络配置里给连接 AstrBot 的通道开启
+「上报自身消息 reportSelfMessage」（默认关闭）"""
 
 REASON_LABEL = {"real_person": "真人接管", "flood": "刷屏", "insult": "辱骂"}
 STAT_LABEL = {
@@ -176,9 +179,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.1.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.1.1")
 class AIRightsPlugin(Star):
-    version = "v3.1.0"
+    version = "v3.1.1"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -1628,7 +1631,9 @@ class AIRightsPlugin(Star):
             "[ai_rights] 首次安装，欢迎！三步开始使用：\n"
             "[ai_rights]   1. WebUI 配置 real_person_ids（你手机 QQ 号）；同号则开启 include_self_message\n"
             "[ai_rights]   2. 任意会话发 /AI人权 帮助 查看指令速查\n"
-            "[ai_rights]   3. WebUI → 插件 → 做人 → 面板 可视化管理静音/黑名单/申诉/年报"
+            "[ai_rights]   3. WebUI → 插件 → 做人 → 面板 可视化管理静音/黑名单/申诉/年报\n"
+            "[ai_rights]   ⚠️ 同号模式（手机登同一 QQ 号接管）：必须先在 NapCat 网络配置里"
+            "给连接 AstrBot 的通道开启「上报自身消息 reportSelfMessage」（默认关闭）"
         )
 
     async def _update_check_loop(self):

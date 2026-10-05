@@ -1,8 +1,13 @@
-# 做人（astrbot_plugin_ai_rights）v3.1.0
+# 做人（astrbot_plugin_ai_rights）v3.1.1
 
 > 让机器人学会做人：有尊严、有边界、会闭嘴。
 
-![Version](https://img.shields.io/badge/version-v3.1.0-1a73e8) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759) [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-5f6368)](CHANGELOG.md)
+![Version](https://img.shields.io/badge/version-v3.1.1-1a73e8) ![AstrBot](https://img.shields.io/badge/AstrBot-插件-3482ff) ![License](https://img.shields.io/badge/license-MIT-34c759) [![Changelog](https://img.shields.io/badge/更新日志-CHANGELOG-5f6368)](CHANGELOG.md)
+
+> **⚠️ 使用前必读**：如果你用「同号模式」（机器人挂服务器、你用手机登同一个 QQ 号接管），
+> **必须先在协议端 NapCat 开启「上报自身消息」`reportSelfMessage`**（默认关闭）——
+> 不开的话插件收不到你手机发的任何消息，AI 会继续抢答。
+> 详细步骤见下方「[一、真人接管怎么用 → 同号模式](#同号模式机器人挂-linux你用手机登同一个号接管)」。
 
 AstrBot 插件。所有功能都围绕「AI 也是有尊严的」：
 
@@ -86,17 +91,52 @@ WebUI 的登录鉴权，没有额外端口。面板不可用时（老版本 Astr
 
 ### 同号模式（机器人挂 Linux，你用手机登同一个号接管）
 
-1. 协议端（NapCat/Lagrange 等）开启「上报自身消息」（reportSelfMessage）。
-2. 插件配置开启 `include_self_message`。
-3. **原理**：手机上发出的同号消息以 `post_type=message_sent` 上报，这类事件**不经过
-   AstrBot 的普通消息管线**（适配器只订阅 `message.*`，`message_sent.*` 在适配器层就被
-   丢弃）。所以插件会直接订阅 aiocqhttp 事件总线的 `message_sent`，收到后让对应会话
-   立即静音。
-4. 判定规则：`message_sent` 且发送者==机器人账号 → 你手机发的 → 接管；机器人自己经
-   API 发出、被协议回显的消息会落在守卫窗口内（`self_echo_guard_seconds`，默认 15 秒）
-   被排除；普通 `message` 管线消息按协议方向字段判定。
-5. 验证：重载插件后日志应出现「已订阅 aiocqhttp message_sent 事件」；随后用手机发一条
-   消息，`/真人状态` 应显示静音，AI 停止扮演。
+> 这是本插件最常用的场景：QQ 机器人在服务器上挂着，你偶尔用手机登同一个账号替它说话。
+> **必须先改协议端设置，否则插件收不到任何信号。**
+
+#### ⚠️ 第一步：协议端必须开启「上报自身消息」（不做这步插件永远无效）
+
+NapCat 的这个开关**默认是关闭的**，关着的时候你手机发的消息不会上报到 AstrBot，
+插件根本收不到，AI 会继续抢答。
+
+- **NapCat**：WebUI → 网络配置 → 找到连接 AstrBot 的那个 **WebSocket 客户端/服务器**
+  通道 → 勾选/开启 `reportSelfMessage`（上报自身消息）→ 保存并重连。
+  注意：该选项是**每个连接通道单独配置**的，要改的正是 AstrBot 用的那一条。
+- **Lagrange / 其他 OneBot 实现**：找同名的「上报自身消息 / 上报自己发的消息」选项。
+- 配置在 NapCat 的 `onebot11_<QQ号>.json` 里对应字段是 `"reportSelfMessage": true`，
+  也可以直接改文件后重启。
+
+#### 第二步：插件配置
+
+在 WebUI 插件配置里开启：
+
+- `self_message_takeover`（**默认已开**）：识别「自己账号的发言」，只要不是机器人自己
+  发出的，就视为你用手机接管。推荐保持开启，它不依赖协议的方向字段。
+- `include_self_message`：旧的方向字段判定路径，`self_message_takeover` 开启时可不填。
+
+#### 第三步：原理与判定规则
+
+1. 手机发出的同号消息以 `post_type=message_sent` 上报，这类事件**不经过 AstrBot 的普通
+   消息管线**（适配器只订阅 `message.*`），所以在适配器层就被丢弃；插件直接在
+   **原始 payload 层**（`bot._handle_event` 外层）拦截处理，绕过库的所有推断。
+2. 判定规则：发送者 == 机器人账号，且内容与插件最近的外发记录**不一致** → 判定为你
+   手打的消息 → 该会话立即静音。
+3. 机器人自己发出的消息（含接管提示、申诉结果、日报推送）在发送时会登记外发记录，
+   内容一致即视为自身回显，不会误触发。
+
+#### 第四步：验证（务必按顺序确认）
+
+1. 到 NapCat 网络配置确认 `reportSelfMessage` 已开启并重连；
+2. 覆盖安装插件后在 AstrBot WebUI 重载插件；
+3. 用手机发一条消息（例：`测试`）；
+4. 群里发 `/AI人权`，看最下方的「同号接管」诊断行：
+   - `已就绪（原始层 ×1），但从未收到自身消息事件 ⚠️` → **NapCat 的
+     reportSelfMessage 没开**（最常见），回到第一步；
+   - `收到自身消息事件 N 条，触发接管 M 次` → 正常工作，AI 已停止扮演；
+   - `未开启` → 插件配置里打开了 `self_message_takeover` 之后重载。
+
+> 排查提示：诊断行里的「最近跳过原因」会告诉你消息为什么没触发（例如
+> `判定为机器人自身回显（内容匹配）` / `非自身消息` / `该群不在作用范围内`）。
 
 ### 注意
 
@@ -167,4 +207,7 @@ WebUI 的登录鉴权，没有额外端口。面板不可用时（老版本 Astr
 自动探测并安装（旧版本自动备份）。
 
 方式二：把 `astrbot_plugin_ai_rights` 文件夹放进 AstrBot 的 `data/plugins/` 后在 WebUI 里加载。
+
+> 同号模式用户注意：安装后请务必按「同号模式」章节开启 NapCat 的 `reportSelfMessage`，
+> 否则插件无法感知你手机端的发言。
 LLM 裁量模式需要 AstrBot 至少配置了一个对话提供商。

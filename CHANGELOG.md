@@ -3,6 +3,14 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.1.1] - 2026-10-02
+
+### 文档
+- **README「同号模式」章节重写**：把 NapCat 必须开启 `reportSelfMessage`（默认关闭）写成
+  四步操作清单，含「不做的后果」「具体改哪个通道」「JSON 字段名」「按诊断逐条排查」
+- README 顶部与安装节各加一条醒目警告，避免用户装完不知道还要改协议端
+- `/AI人权 帮助` 与首次安装引导日志同步加上该提示
+
 ## [3.1.0] - 2026-10-02
 
 ### 修复（找到「事件收不到」的库层根因）
@@ -185,6 +193,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.1.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.1
 [3.1.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.0
 [3.0.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.0.0
 [2.9.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v2.9.0
