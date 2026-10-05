@@ -1122,7 +1122,21 @@ class AIRightsPlugin(Star):
             self_id = str(event.get_self_id() or "")
             text = str(getattr(event, "message_str", "") or "").strip()
             is_admin = str(getattr(event, "role", "") or "") == "admin"
-            trusted = is_admin or (sender and sender in self._real_person_ids())
+            same_account = bool(sender and self_id and sender == self_id)
+            trusted = is_admin or (sender and (
+                sender in self._real_person_ids() or same_account
+            ))
+
+            # 铁律：同号接管开启时，机器人账号自己发出的消息（含协议回显进管线的），
+            # 默认 LLM 永远不回应。否则私聊回显会被当成用户消息（私聊自动唤醒）→
+            # AI 回复自己 → 回显再进管线 → 无限自言自语（「AI 对自己私聊一直发消息」）。
+            # 注意这只是拦默认 LLM 链路：同号接管/反骚扰等其他逻辑照常执行。
+            if (
+                same_account
+                and (self._cfg_get("self_message_takeover", True)
+                     or self._cfg_get("include_self_message", False))
+            ):
+                event.should_call_llm(True)
 
             # 0. 黑名单：AI 拒绝服务（管理员豁免，防止把管理员自己锁死）
             if not is_admin and self._is_blacklisted(umo, sender):

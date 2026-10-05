@@ -15,6 +15,19 @@
 - 判定规则不变：自身消息与外发记录内容一致 = 机器人发的；不一致 = 真人接管
 - `terminate` 时还原 `context.send_message` 包装
 
+## [3.2.1] - 2026-10-02
+
+### 修复（「AI 对自己私聊一直发消息」的自激循环）
+- **铁律：同号接管开启时，机器人账号自己发出的消息（含协议回显进管线的），默认 LLM
+  永远不回应。** 此前回显消息虽然不触发接管（内容匹配豁免），但也没有被压制——私聊
+  自动唤醒 + 回显再进管线 = AI 回复自己说过的话 → 回显再进管线 → 无限自言自语循环
+- 同号消息不再计入反骚扰刷屏窗口（同号信任），避免机器人自己的回显撑爆冷却计数
+- 群聊里自己的回显（带 @ 满足唤醒条件的）同样被拦
+
+### 验证
+- AI 发言 → 回显进管线 → 官方闸门不放行 LLM（自言自语循环被斩断）
+- 真人手机异文本照常接管并拦 LLM；其他用户正常对话不受影响
+
 ## [3.2.0] - 2026-10-02
 
 ### 新增
@@ -220,6 +233,7 @@
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
 [3.3.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.0
+[3.2.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.1
 [3.2.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.0
 [3.1.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.1
 [3.1.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.1.0

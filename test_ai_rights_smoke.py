@@ -976,6 +976,63 @@ async def _run_v13(mod, state_path):
     await p.terminate()
 
 
+async def _run_v14(mod, state_path):
+    """v3.2.1 自言自语循环修复：机器人自己的回显（私聊自动唤醒）不再被 AI 回复。"""
+    mod.STATE_PATH = state_path
+    ctx = FakeWebContext()
+    cfg = {"persist_state": True, "self_message_takeover": True, "include_self_message": False,
+           "real_person_ids": "", "takeover_reply_enabled": False,
+           "notify_on_real_person": False}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+
+    def llm_would_run(ev) -> bool:
+        return (not ev.call_llm) and bool(ev.is_at_or_wake_command)
+
+    # 场景：AI 刚在私聊里说了"嗯，那就睡"，协议把这条消息回显进管线（私聊自动唤醒）
+    umo = "aiocqhttp:FriendMessage:7001"
+    p._remember_outbound_text(umo, "嗯，那就睡")
+    ev_echo = FakeEvent(sender="7001", self_id="7001", text="嗯，那就睡",
+                        raw={"post_type": "message", "message_type": "private"},
+                        wake=True, umo=umo)
+    # 同号接管判定：内容匹配 → 不接管；铁律：仍禁止默认 LLM
+    await p.gatekeeper(ev_echo)
+    check("自己消息的回显不触发接管", p._session_mute_left(umo) == 0)
+    check("自言自语循环被斩断（官方闸门不放行）", llm_would_run(ev_echo) is False)
+
+    # 回显不计入反骚扰（同号信任）
+    for i in range(10):
+        e = FakeEvent(sender="7001", self_id="7001", text=f"刷屏{i}",
+                      raw={"post_type": "message", "message_type": "private"},
+                      wake=True, umo=umo)
+        await p.gatekeeper(e)
+    check("同号回显不触发刷屏冷却", p._user_mute_left(umo, "7001") is None)
+
+    # 对比：真人手机消息（内容不同）→ 接管 + 拦 LLM
+    ev_human = FakeEvent(sender="7001", self_id="7001", text="我本人上线了",
+                         raw={"post_type": "message", "message_type": "private"},
+                         wake=True, umo=umo)
+    await p.gatekeeper(ev_human)
+    check("真人异文本照常接管并拦 LLM", p._session_mute_left(umo) > 0 and llm_would_run(ev_human) is False)
+
+    # 其他真实用户不受影响（另一会话仍可正常对话）
+    ev_friend = FakeEvent(sender="7002", text="在吗", wake=True, umo="aiocqhttp:FriendMessage:7002")
+    await p.gatekeeper(ev_friend)
+    check("其他用户正常对话不受影响", llm_would_run(ev_friend) is True)
+
+    # 群里机器人自己回复的回显（带 @，满足唤醒）同样被拦
+    grp = "aiocqhttp:GroupMessage:933001"
+    p._remember_outbound_text(grp, "@穗稔 嗯，那就睡。别又刷到天亮了。")
+    ev_grp_echo = FakeEvent(sender="7001", self_id="7001",
+                            text="@穗稔 嗯，那就睡。别又刷到天亮了。",
+                            raw={"post_type": "message", "message_type": "group"},
+                            wake=True, umo=grp)
+    await p.gatekeeper(ev_grp_echo)
+    check("群聊里自己的回显也不自答", llm_would_run(ev_grp_echo) is False)
+
+    await p.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1246,6 +1303,9 @@ def main():
 
         print("== 统一外发记录（v3.3 插件推送不再误触发）==")
         asyncio.run(_run_v13(mod, os.path.join(os.path.dirname(state_path), "state_v13.json")))
+
+        print("== 自言自语循环修复（v3.2.1 铁律）==")
+        asyncio.run(_run_v14(mod, os.path.join(os.path.dirname(state_path), "state_v14.json")))
 
     print(f"\n全部通过：{passed} 项检查 ✓")
 
