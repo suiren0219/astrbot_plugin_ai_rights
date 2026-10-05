@@ -3,6 +3,17 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.3.1] - 2026-10-02
+
+### 变更（市场重新提交版本）
+- **版本号统一**：此前连续修复期间 git tag 与代码内版本号出现不一致（v3.2.1 / v3.2.2 的
+  修复内容实际都包含在 v3.3.0 代码基线上）。自本版起，tag、`metadata.yaml`、
+  代码内版本号三者保持一致
+- **持久化位置规范化完整包含**（市场审核要求）：状态文件位于
+  `data/plugin_data/astrbot_plugin_ai_rights/state.json`，旧位置
+  `data/config/ai_rights_state.json` 会在升级时自动迁移并清理
+- 模块文档中的旧路径说明同步更新
+
 ## [3.3.0] - 2026-10-02
 
 ### 修复（「插件生效误触发接管」）
@@ -244,6 +255,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.3.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.1
 [3.3.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.0
 [3.2.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.2
 [3.2.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.1

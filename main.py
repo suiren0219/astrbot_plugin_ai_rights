@@ -36,7 +36,7 @@
   /申诉同意|驳回 <编号>    处理申诉（管理员）
   /人权年报               今日+昨日人权统计
 
-状态持久化在 data/config/ai_rights_state.json，重启不丢。
+状态持久化在 data/plugin_data/astrbot_plugin_ai_rights/state.json，重启不丢（旧位置文件自动迁移）。
 """
 from __future__ import annotations
 
@@ -181,9 +181,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.0")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.1")
 class AIRightsPlugin(Star):
-    version = "v3.3.0"
+    version = "v3.3.1"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
