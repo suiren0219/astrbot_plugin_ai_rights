@@ -2,7 +2,7 @@ name: astrbot_plugin_ai_rights
 display_name: 做人
 short_desc: 真人接管静音 + AI 反骚扰 + 话题守护 + 群范围管控，附 MIUI 风格面板
 desc: 做人——真人接管时自动让 AI 在该会话静音（老板键）；AI 反骚扰（刷屏冷却、辱骂冷处理、屡犯升级、LLM 裁量）；话题守护（无意义/跑题不答，不拦 NSFW）；群范围管控；黑名单；申诉通道；人权年报；MIUI 风格 WebUI 面板
-version: 3.3.2
+version: 3.3.3
 author: suiren0219
 repo: https://github.com/suiren0219/astrbot_plugin_ai_rights
 category: 实用工具

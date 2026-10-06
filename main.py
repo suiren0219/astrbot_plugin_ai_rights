@@ -826,7 +826,9 @@ class AIRightsPlugin(Star):
             f"[ai_rights] 检测到同号真人消息 → 会话静音：{umo}"
             f"（{source}，{'新静音' if fresh else '续期'}，文字：{text[:30]!r}）"
         )
-        if fresh and self._cfg_get("notify_on_real_person", False):
+        # 接管提示只发群聊：私聊窗口里看到「AI 退下」提示的就是持有者本人，
+        # 再发一遍等于机器人对着自己的 QQ 私聊反复发消息（用户实测反感的点）。
+        if fresh and is_group and self._cfg_get("notify_on_real_person", False):
             notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
             try:
                 self._note_own_send(umo, notice)
@@ -937,7 +939,9 @@ class AIRightsPlugin(Star):
             elif target_id is not None and str(target_id) != self_id:
                 gid = str(target_id)
             else:
-                gid = str(sender)  # 自聊会话
+                # 自聊会话（机器人账号给自己发消息）：没有需要静默的对象
+                self._bus_last_skip = "自我私聊会话（忽略）"
+                return
             umo_candidates = self._candidate_session_keys(is_group, gid)
             text = str(getter("raw_message") or "").strip()
             if self._looks_like_own_outbound(umo_candidates[0], text) or self._match_outbound_echo(text, umo_candidates):
@@ -967,7 +971,7 @@ class AIRightsPlugin(Star):
                 f"[ai_rights] 检测到同号真人消息 → 会话静音：{umo}"
                 f"（{'新静音' if fresh else '续期'}，文字：{text[:30]!r}）"
             )
-            if fresh and self._cfg_get("notify_on_real_person", False):
+            if fresh and is_group and self._cfg_get("notify_on_real_person", False):
                 notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
                 try:
                     self._note_own_send(umo, notice)
@@ -1300,7 +1304,9 @@ class AIRightsPlugin(Star):
             # 1. 真人接管触发（名单命中或同号自发回显，由 _is_real_person_event 判定）
             if self._is_real_person_event(event, umo, sender, self_id, text):
                 fresh = self._trigger_session_mute(umo)
-                if fresh and self._cfg_get("notify_on_real_person", False):
+                # 提示只发群聊（私聊窗口的读者就是持有者本人，发了反而像 AI 自言自语）
+                if fresh and bool(str(event.get_group_id() or "").strip()) \
+                        and self._cfg_get("notify_on_real_person", False):
                     notice = str(self._cfg_get("notify_text_real_person", "") or "（AI 暂时退下，真人接管中…）")
                     try:
                         await event.send(MessageChain().message(notice))
