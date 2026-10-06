@@ -181,9 +181,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.1")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.2")
 class AIRightsPlugin(Star):
-    version = "v3.3.1"
+    version = "v3.3.2"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -240,6 +240,7 @@ class AIRightsPlugin(Star):
         self._bus_platform_ids: list = []      # 订阅总线时记录的平台实例 id
         self._raw_counts: dict = {}            # 原始 payload 计数（post_type -> n，诊断用）
         self._raw_hooked_bots: list = []       # 已安装原始层拦截的 bot
+        self._api_hooked_bots: list = []       # 已安装 bot.send/call_action 记录钩子的 bot
 
     # ------------------------------------------------------------------
     # 配置读取
@@ -532,6 +533,10 @@ class AIRightsPlugin(Star):
             # 第一层（最可靠）：原始 payload 拦截，不依赖库的任何推断
             if self._install_raw_hook(bot):
                 found = True
+            # 第二层：bot.send / bot.call_action 外发账本（其他插件绕过管线的
+            # 原始 API 发送也登记，防止其回显被同号接管误判为真人）
+            if self._install_outbound_api_hook(bot, pid):
+                found = True
             if not hasattr(bot, "subscribe"):
                 continue
             try:
@@ -569,6 +574,119 @@ class AIRightsPlugin(Star):
         self._raw_hooked_bots = []
         self._bus_bot = None
         self._bus_handler = None
+
+    @staticmethod
+    def _text_from_message(message) -> str:
+        """从 str / Message / 段落列表里提取纯文本（尽量）。"""
+        try:
+            if message is None:
+                return ""
+            if isinstance(message, str):
+                return message
+            segs = getattr(message, "message", None)
+            segs = segs if segs is not None else message
+            parts = []
+            for seg in segs:
+                if isinstance(seg, str):
+                    parts.append(seg)
+                    continue
+                if isinstance(seg, dict):
+                    d = seg.get("data") or {}
+                    t = d.get("text") if isinstance(d, dict) else None
+                else:
+                    t = getattr(seg, "text", None)
+                    if t is None:
+                        d = getattr(seg, "data", None)
+                        t = d.get("text") if isinstance(d, dict) else None
+                if isinstance(t, str):
+                    parts.append(t)
+            return "".join(parts)
+        except Exception:
+            return ""
+
+    def _install_outbound_api_hook(self, bot, platform_id: str) -> bool:
+        """包装 bot.send / bot.call_action：登记所有经此客户端发出的消息。
+
+        其他插件绕过 AstrBot 管线、直接走原始 OneBot API 发送的消息此前不在
+        外发账本里，协议回显时会被同号接管误判为真人发言。包一层后所有
+        aiocqhttp 出站消息（含其他插件的）都进入统一外发账本。
+        """
+        if getattr(bot, "_ai_rights_send_hooked", False):
+            return True
+        pid = str(platform_id or "aiocqhttp")
+        orig_send = getattr(bot, "send", None)
+        orig_call = getattr(bot, "call_action", None)
+        hooked = False
+
+        def _remember(mt: str, sid: str, text: str) -> None:
+            if not sid:
+                return
+            umo = f"{pid}:{'GroupMessage' if mt == 'group' else 'FriendMessage'}:{sid}"
+            self._remember_outbound_text(umo, text)
+
+        def _session_of(params: dict) -> tuple[str, str]:
+            gid = params.get("group_id")
+            uid = params.get("user_id")
+            mt = str(params.get("message_type") or "").strip().lower()
+            if gid is not None or mt == "group":
+                return "group", str(gid or "")
+            return "private", str(uid or "")
+
+        if callable(orig_send):
+            async def _send(event_or_ctx, message, *a, **kw):
+                try:
+                    params = {}
+                    if hasattr(event_or_ctx, "get"):
+                        for k in ("group_id", "user_id", "message_type"):
+                            v = event_or_ctx.get(k)
+                            if v is not None:
+                                params[k] = v
+                    params.update(kw)
+                    mt, sid = _session_of(params)
+                    if sid:
+                        _remember(mt, sid, self._text_from_message(message))
+                except Exception:
+                    pass
+                return await orig_send(event_or_ctx, message, *a, **kw)
+            try:
+                bot.send = _send
+                hooked = True
+            except Exception as e:
+                logger.debug(f"[ai_rights] 包装 bot.send 失败: {e}")
+
+        if callable(orig_call):
+            async def _call(action, **params):
+                try:
+                    a = str(action).strip().lower()
+                    if a in ("send_msg", "send_group_msg", "send_private_msg"):
+                        mt, sid = _session_of(params)
+                        if sid:
+                            _remember(mt, sid, self._text_from_message(params.get("message")))
+                except Exception:
+                    pass
+                return await orig_call(action, **params)
+        try:
+            bot.call_action = _call
+            hooked = True
+        except Exception as e:
+            logger.debug(f"[ai_rights] 包装 bot.call_action 失败: {e}")
+
+        if hooked:
+            bot._ai_rights_send_hooked = True
+            self._api_hooked_bots.append((bot, orig_send, orig_call))
+        return hooked
+
+    def _uninstall_outbound_api_hook(self):
+        for bot, orig_send, orig_call in getattr(self, "_api_hooked_bots", None) or []:
+            try:
+                bot.send = orig_send
+            except Exception:
+                pass
+            try:
+                bot.call_action = orig_call
+            except Exception:
+                pass
+        self._api_hooked_bots = []
 
     def _install_raw_hook(self, bot) -> bool:
         """在 bot 实例上包一层 _handle_event，直接拦截原始 payload。
@@ -623,11 +741,20 @@ class AIRightsPlugin(Star):
             return
         payload["_ai_rights_raw_handled"] = True
         group_id = payload.get("group_id")
+        target_id = payload.get("target_id")
         mt = str(payload.get("message_type") or "").strip().lower()
         is_group = bool(group_id) or mt == "group"
-        gid = str(group_id or user_id)
+        # 私聊 message_sent：NapCat 不带对方 QQ（user_id 是发送者=自己），
+        # target_id 存在时用它作为会话；否则无法定位会话，只按铁律压制不接管
+        peer = str(target_id if target_id is not None else "")
+        if is_group:
+            gid = str(group_id)
+        elif peer and peer != self_id:
+            gid = peer
+        else:
+            gid = str(user_id)  # 自聊会话
         text = str(payload.get("raw_message") or "").strip()
-        await self._handle_self_takeover(is_group, gid, text, source="原始层")
+        await self._handle_self_takeover(is_group, gid, text, source="原始层", self_id=self_id)
 
     def _patch_event_from_payload(self) -> bool:
         """兼容 shim：让 aiocqhttp 的 Event 接受 message_sent 事件。
@@ -665,8 +792,12 @@ class AIRightsPlugin(Star):
             return False
         return True
 
-    async def _handle_self_takeover(self, is_group: bool, gid: str, text: str, source: str = "总线") -> None:
+    async def _handle_self_takeover(self, is_group: bool, gid: str, text: str, source: str = "总线", self_id: str = "") -> None:
         """同号手机消息的统一接管处理（原始层与总线层共用）。"""
+        # 自聊会话（机器人账号给自己发消息）：没有需要静默的对象，不接管、不通知
+        if not is_group and self_id and str(gid) == str(self_id):
+            self._bus_last_skip = "自我私聊会话（忽略）"
+            return
         umo_candidates = self._candidate_session_keys(is_group, gid)
         text = (text or "").strip()
         if self._looks_like_own_outbound(umo_candidates[0], text) or self._match_outbound_echo(text, umo_candidates):
@@ -733,6 +864,7 @@ class AIRightsPlugin(Star):
 
         比纯时间窗可靠：守卫时间内文本与任意外发记录一致（或无法比文本）才算回显；
         真人手打的文本不同 → 不算回显，正常触发接管。
+        极短窗口兜底：本会话在 3 秒内有外发 → 大概率是非文本输出（JSON 卡片、图片等）的回显。
         """
         guard = max(5.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
         now = time.time()
@@ -761,6 +893,16 @@ class AIRightsPlugin(Star):
             # 文本不同 → 是真人手打，哪怕同会话刚发过消息也要触发接管。
             if nt == target or (len(target) >= 2 and target in nt) or (len(nt) >= 2 and nt in target):
                 return True
+
+        # 极短窗口兜底：本会话在 3 秒内有外发记录，且文本不匹配任何记录 →
+        # 大概率是机器人自身的非文本输出（JSON 卡片、图片、引用等）的回显
+        recent_send = max(
+            (_to_float(self._outbound_ts.get(c, 0.0), 0.0) for c in umo_candidates),
+            default=0.0,
+        )
+        if recent_send > 0 and now - recent_send <= 3.0:
+            return True
+
         return False
 
     async def _on_self_message_bus(self, ev):
@@ -788,8 +930,14 @@ class AIRightsPlugin(Star):
                 self._bus_last_skip = f"非自身消息（user_id={sender} != self_id={self_id}）"
                 return  # 只处理同号自身消息
             group_id = getter("group_id")
+            target_id = getter("target_id")
             is_group = bool(group_id)
-            gid = str(group_id or sender)
+            if is_group:
+                gid = str(group_id)
+            elif target_id is not None and str(target_id) != self_id:
+                gid = str(target_id)
+            else:
+                gid = str(sender)  # 自聊会话
             umo_candidates = self._candidate_session_keys(is_group, gid)
             text = str(getter("raw_message") or "").strip()
             if self._looks_like_own_outbound(umo_candidates[0], text) or self._match_outbound_echo(text, umo_candidates):
@@ -1794,6 +1942,7 @@ class AIRightsPlugin(Star):
 
     async def terminate(self):
         self._unhook_self_message_bus()
+        self._uninstall_outbound_api_hook()
         self._unwrap_context_send()
         tasks = [t for t in (self._report_task, self._save_task, self._update_task) if t is not None]
         for t in tasks:

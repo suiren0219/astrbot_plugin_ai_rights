@@ -254,7 +254,7 @@ class FakeBot:
 
 
 class FakeRawBot(FakeBot):
-    """模拟真实 CQHttp 实例：有 _handle_event（async），供原始层包装。"""
+    """模拟真实 CQHttp 实例：有 _handle_event（async）与 call_action，供包装。"""
 
     def __init__(self):
         super().__init__()
@@ -263,6 +263,14 @@ class FakeRawBot(FakeBot):
 
     async def _handle_event(self, payload):
         self.passed.append(payload)
+        return None
+
+    async def call_action(self, action, **params):
+        self.passed.append({"action": action, **params})
+        return None
+
+    async def send(self, event_or_ctx, message, *a, **k):
+        self.passed.append({"send": True, "text": str(message)})
         return None
 
 
@@ -1059,6 +1067,51 @@ async def _run_v15(mod, state_path):
     await p2.terminate()
 
 
+async def _run_v16(mod, state_path):
+    """v3.4：API 级外发账本 + 自聊会话跳过 + 私聊 target_id 会话键。"""
+    mod.STATE_PATH = state_path
+    bot = FakeRawBot()
+    ctx = FakeWebContext(bot=bot, platform_id="qq-linux-bot")
+    cfg = {"persist_state": True, "self_message_takeover": True, "include_self_message": False,
+           "notify_on_real_person": True,
+           "notify_text_real_person": "（AI 暂时退下，真人接管中…）"}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    grp = "qq-linux-bot:GroupMessage:933001"
+
+    # 其他插件经原始 API（call_action）在群里发消息 → 登记外发账本
+    await bot.call_action("send_group_msg", group_id=933001,
+                          message=[{"type": "text", "data": {"text": "【定时推送】数据播报"}}])
+    check("API 级发送已登记外发账本", any("数据播报" in t for _u, t, _ts in p._outbound_texts))
+
+    # 该推送的回显（message_sent 同文本）→ 不触发接管
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "raw_message": "【定时推送】数据播报",
+                             "message_type": "group"})
+    check("其他插件 API 发送的回显不误触发接管", p._session_mute_left(grp) == 0)
+
+    # 场景：持有者在私聊窗口（和自己/或对方）发消息
+    # 自聊会话（gid==self_id）：不接管、不发通知
+    self_umo = "qq-linux-bot:FriendMessage:7001"
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "raw_message": "自言自语", "message_type": "private"})
+    check("自聊会话不接管", p._session_mute_left(self_umo) == 0)
+    check("自聊会话不发接管通知", not any("暂时退下" in t for _, t in ctx.sent))
+
+    # 带 target_id 的私聊 message_sent（协议端提供对方时）→ 接管对应会话
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "target_id": 7002, "raw_message": "我跟你说个事",
+                             "message_type": "private"})
+    check("target_id 私聊接管（对会话 7002）", p._session_mute_left("qq-linux-bot:FriendMessage:7002") > 0)
+
+    # 接管后对方再说话 → 被拦
+    ev_x = FakeEvent(sender="7002", text="怎么了", wake=True, umo="qq-linux-bot:FriendMessage:7002")
+    await p.gatekeeper(ev_x)
+    check("接管后对方消息被拦", ev_x.call_llm is True)
+
+    await p.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1332,6 +1385,9 @@ def main():
 
         print("== 自言自语循环修复（v3.2.1 铁律）==")
         asyncio.run(_run_v14(mod, os.path.join(os.path.dirname(state_path), "state_v14.json")))
+
+        print("== 私聊会话键与 API 账本（v3.4）==")
+        asyncio.run(_run_v16(mod, os.path.join(os.path.dirname(state_path), "state_v16.json")))
 
         print("== 持久化迁移（v3.2.2 市场规范）==")
         asyncio.run(_run_v15(mod, os.path.join(os.path.dirname(state_path), "state_v15.json")))

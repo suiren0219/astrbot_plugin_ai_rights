@@ -7,7 +7,7 @@ import os
 import re
 import sys
 
-BASE = os.path.dirname(os.path.abspath(__file__))  # 仓库布局：插件文件在根目录
+BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "astrbot_plugin_ai_rights")
 MAIN = os.path.join(BASE, "main.py")
 WEBUI = os.path.join(BASE, "webui.py")
 README = os.path.join(BASE, "README.md")

@@ -3,6 +3,18 @@
 所有重要变更都会记录在本文件。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [3.3.2] - 2026-10-02
+
+### 修复（分享链接 JSON 卡片误触发接管）
+- **API 级外发账本**：包装 `bot.call_action` 与 `bot.send`，所有经 aiocqhttp 客户端发出的
+  消息（包括其他插件绕过管线的原始 API 发送）都登记到外发账本。此前这些消息不在账本里，
+  协议回显时会被同号接管误判为真人发言
+- **非文本回复的短窗口兜底**：机器人发送 JSON 卡片、图片等非纯文本回复后，`get_plain_text()`
+  提取不到内容，外发账本没有匹配文本 → 回显被误判为真人。现在：本会话在 3 秒内有外发记录 →
+  视为机器人自身的非文本输出回显，不触发接管
+- 修正 `_call` 包装器内 `_api_session_of` → `_session_of` 的函数引用错误（导致 API 发送
+  记录静默失败）
+
 ## [3.3.1] - 2026-10-02
 
 ### 变更（市场重新提交版本）
@@ -255,6 +267,7 @@
 - 同号模式雏形（`include_self_message` + 自发回显守卫窗口）
 - 状态持久化（`data/config/ai_rights_state.json`）；16 条管理命令；MIUI 面板前身能力齐备
 
+[3.3.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.2
 [3.3.1]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.1
 [3.3.0]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.3.0
 [3.2.2]: https://github.com/suiren0219/astrbot_plugin_ai_rights/releases/tag/v3.2.2
