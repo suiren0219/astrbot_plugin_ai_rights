@@ -936,12 +936,14 @@ class AIRightsPlugin(Star):
             is_group = bool(group_id)
             if is_group:
                 gid = str(group_id)
-            elif target_id is not None and str(target_id) != self_id:
-                gid = str(target_id)
-            else:
+            elif target_id is not None and str(target_id) == self_id:
                 # 自聊会话（机器人账号给自己发消息）：没有需要静默的对象
                 self._bus_last_skip = "自我私聊会话（忽略）"
                 return
+            elif target_id is not None:
+                gid = str(target_id)
+            else:
+                gid = str(sender)  # 旧契约兜底：无 target_id 时按发送者会话静音（无副作用）
             umo_candidates = self._candidate_session_keys(is_group, gid)
             text = str(getter("raw_message") or "").strip()
             if self._looks_like_own_outbound(umo_candidates[0], text) or self._match_outbound_echo(text, umo_candidates):

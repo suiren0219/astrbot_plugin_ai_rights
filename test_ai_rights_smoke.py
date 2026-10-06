@@ -17,7 +17,7 @@ import time
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLUGIN_DIR = HERE  # 仓库布局：插件文件在根目录
+PLUGIN_DIR = os.path.join(HERE, "astrbot_plugin_ai_rights")
 MAIN_PY = os.path.join(PLUGIN_DIR, "main.py")
 
 passed = 0
@@ -711,9 +711,14 @@ async def _run_v6(mod, state_path):
     # 手机端持有者消息（同号入站，无出站标记）→ 立即接管
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "我来接管一下"})
     check("同号手机消息触发会话接管（真实平台名键）", p._session_mute_left(umo) > 0)
-    # 私聊同号消息同样接管
-    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "raw_message": "私聊也接管"})
-    check("同号手机私聊消息触发接管", p._session_mute_left("qq-main:FriendMessage:123456") > 0)
+    # 私聊同号消息同样接管（真实 NapCat 私聊 message_sent 带 target_id = 接收方）
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "target_id": 654321,
+                   "raw_message": "私聊也接管"})
+    check("同号手机私聊消息触发接管", p._session_mute_left("qq-main:FriendMessage:654321") > 0)
+    # 自聊会话（发给自己）无静默对象：不接管、不提示（v3.3.3 私聊骚扰修复）
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "target_id": 123456,
+                   "raw_message": "自聊不接管"})
+    check("自聊会话不接管", p._session_mute_left("qq-main:FriendMessage:123456") == 0)
     # 机器人 API 发送回显（同文本）不触发
     import time as _t
     p._session_mutes.pop(umo, None)
