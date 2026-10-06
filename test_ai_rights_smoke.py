@@ -1117,6 +1117,61 @@ async def _run_v16(mod, state_path):
     await p.terminate()
 
 
+async def _run_v17(mod, state_path):
+    """v3.3.4：message_id 对账——AI 刚发言后 3 秒内真人手机消息必须触发接管。
+
+    回归场景（用户截图复现）：AI 说完话 → 持有者立刻用手机同号发言 →
+    旧 3 秒守卫窗把它当成「机器人非文本回显」吞掉 → AI 继续说话。
+    """
+    mod.STATE_PATH = state_path
+    bot = FakeRawBot()
+
+    async def _call_with_mid(action, **params):
+        bot.passed.append({"action": action, **params})
+        return {"message_id": bot.next_mid}   # 模拟协议端发送响应
+
+    bot.call_action = _call_with_mid
+    bot.next_mid = 555001
+    ctx = FakeWebContext(bot=bot, platform_id="qq-linux-bot")
+    cfg = {"persist_state": True, "self_message_takeover": True, "include_self_message": False}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    grp = "qq-linux-bot:GroupMessage:933001"
+
+    # AI 在群里发言（经 call_action → 钩子记下文本 + message_id 555001 + 外发时间戳）
+    await bot.call_action("send_group_msg", group_id=933001,
+                          message=[{"type": "text", "data": {"text": "睡到刚醒，天都快暗了。"}}])
+    check("API 发送已记 message_id 对账账本", "555001" in p._own_msg_ids)
+
+    # 该发送的回显（同一个 message_id，即使文本长得像卡片）→ 不触发接管
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "message_id": 555001,
+                             "raw_message": "[CQ:json,data={\"meta\":{\"utt\":\"x\"}}]"})
+    check("message_id 对账命中：自身回显不触发接管", p._session_mute_left(grp) == 0)
+
+    # 关键回归：紧接着（<3 秒）持有者手机发言，message_id 不同 → 必须接管
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "message_id": 555002,
+                             "raw_message": "小亚在的"})
+    check("AI 刚发言后真人手机消息立即触发接管（旧 3 秒窗会误吞）",
+          p._session_mute_left(grp) > 0)
+
+    # 接管后别人 @ 机器人 → 被拦
+    ev_x = FakeEvent(sender="7002", text="@小亚 在吗", wake=True, umo=grp)
+    await p.gatekeeper(ev_x)
+    check("接管生效：别人消息被拦", ev_x.call_llm is True)
+
+    # 管线层：带 message_id 的同号入站事件走同一套对账
+    p._session_mutes.pop(grp, None)
+    ev_mid = FakeEvent(sender="bot", self_id="bot", text="持有者手机发的",
+                       raw={"post_type": "message"}, umo=grp)
+    setattr(ev_mid, "message_obj", type("M", (), {"message_id": "555009"})())
+    await p.gatekeeper(ev_mid)
+    check("管线层同号消息（账外 message_id）触发接管", p._session_mute_left(grp) > 0)
+
+    await p.terminate()
+
+
 async def _run_v9(mod, state_path):
     """v2.9 语义锚：对齐官方管线闸门 not event.call_llm。
 
@@ -1393,6 +1448,9 @@ def main():
 
         print("== 私聊会话键与 API 账本（v3.4）==")
         asyncio.run(_run_v16(mod, os.path.join(os.path.dirname(state_path), "state_v16.json")))
+
+        print("== message_id 对账（v3.3.4 真人接管不再被 3 秒窗误吞）==")
+        asyncio.run(_run_v17(mod, os.path.join(os.path.dirname(state_path), "state_v17.json")))
 
         print("== 持久化迁移（v3.2.2 市场规范）==")
         asyncio.run(_run_v15(mod, os.path.join(os.path.dirname(state_path), "state_v15.json")))
