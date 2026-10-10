@@ -719,7 +719,7 @@ async def _run_v6(mod, state_path):
     # 机器人 API 发送回显（同文本）不触发
     import time as _t
     p._session_mutes.pop(umo, None)
-    p._outbound_texts.append((umo, "回显", _t.time()))
+    p._outbound_texts.append((umo, "回显", _t.time(), ""))
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "回显"})
     check("机器人自身回显（同文本）不触发", p._session_mute_left(umo) == 0)
     # 关键回归：AI 刚发言后，真人紧接着发「不同内容」→ 必须触发（旧时间窗会误吞）
@@ -815,7 +815,7 @@ async def _run_v10(mod, state_path):
 
     # 机器人自己发的话不算真人（内容匹配豁免）
     p._session_mutes.pop(grp, None)
-    p._outbound_texts.append((grp, "晚安哦", time.time()))
+    p._outbound_texts.append((grp, "晚安哦", time.time(), ""))
     await handler({"self_id": 7001, "user_id": 7001, "group_id": 933001, "raw_message": "晚安哦"})
     check("机器人自己发的同文本消息不触发", p._session_mute_left(grp) == 0)
 
@@ -879,7 +879,7 @@ async def _run_v11(mod, state_path):
 
     # 机器人回显（内容匹配）不触发
     p._session_mutes.pop(umo, None)
-    p._outbound_texts.append((umo, "晚安", time.time()))
+    p._outbound_texts.append((umo, "晚安", time.time(), ""))
     await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
                              "group_id": 933001, "raw_message": "晚安", "message_type": "group"})
     check("机器人自身回显不触发", p._session_mute_left(umo) == 0)
@@ -1086,7 +1086,7 @@ async def _run_v16(mod, state_path):
     # 其他插件经原始 API（call_action）在群里发消息 → 登记外发账本
     await bot.call_action("send_group_msg", group_id=933001,
                           message=[{"type": "text", "data": {"text": "【定时推送】数据播报"}}])
-    check("API 级发送已登记外发账本", any("数据播报" in t for _u, t, _ts in p._outbound_texts))
+    check("API 级发送已登记外发账本", any("数据播报" in t for _u, t, _ts, _sig in p._outbound_texts))
 
     # 该推送的回显（message_sent 同文本）→ 不触发接管
     await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
@@ -1198,6 +1198,150 @@ async def _run_v17(mod, state_path):
     check("管线层同号消息（账外 message_id）触发接管", p._session_mute_left(grp) > 0)
 
     await p.terminate()
+
+
+class _ApiStub:
+    """bot.api 桩：真实 aiocqhttp 的 CQHttp.api.call_action 是全部动作的咽喉。"""
+
+    def __init__(self):
+        self.calls = []
+
+    async def call_action(self, action, **params):
+        self.calls.append((action, params))
+        return {"message_id": 880001}
+
+
+class _ApiBot(FakeRawBot):
+    """带 api 属性的桩：模拟真实 CQHttp 实例（api.call_action 可被包装）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.api = _ApiStub()
+
+
+async def _run_v18(mod, state_path):
+    """v3.3.6：段类型签名对账——非文本消息（JSON 卡片/图片/合并转发）自身回显不再漏判。
+
+    用户截图复现（小黑盒分享卡）：机器人发出 JSON 卡片 → NapCat 回显
+    message_sent 且 raw_message 为 CQ 卡片 → v3.3.5 的文本兜底没有卡片文本
+    可对 → 机器人被自己的卡片触发接管（AI 自己触发）。
+    """
+    mod.STATE_PATH = state_path
+    bot = FakeRawBot()
+    ctx = FakeWebContext(bot=bot, platform_id="qq-linux-bot")
+    cfg = {"persist_state": True, "self_message_takeover": True, "include_self_message": False}
+    p = mod.AIRightsPlugin(ctx, cfg)
+    await p.initialize()
+    grp = "qq-linux-bot:GroupMessage:933002"
+
+    # ---- 单元锚：段签名与回显解析 ----
+    def _seg(t):
+        return type("Seg", (), {"type": t})()
+
+    _cls = mod.AIRightsPlugin
+    check("段签名：Image+Plain 组件等价纯 image",
+          _cls._cq_sig([_seg("Image"), _seg("Plain")]) == "image")
+    check("段签名：原始 JSON 字符串记 json", _cls._cq_sig('{"app":"x"}') == "json")
+    check("段签名：CQ json 卡（data 含嵌套 ]）记 json",
+          _cls._cq_sig('[CQ:json,data={"a":[1]}]') == "json")
+    check("段签名：纯 text 段不算签名", _cls._cq_sig([_seg("text")]) == "")
+    check("段签名：转发 node 补记 forward",
+          _cls._cq_sig([{"type": "node"}]) == "forward,node")
+    check("回显解析：原始 JSON→(json, 无残余)", _cls._parse_echo('{"app":"x"}') == ("json", ""))
+    check("回显解析：图文混发→(image, 文本)",
+          _cls._parse_echo('[CQ:image,file=a.jpg]看这张图') == ("image", "看这张图"))
+    check("回显解析：纯文字→(空, 原文)", _cls._parse_echo('纯文字消息') == ("", "纯文字消息"))
+    esig, eresid = _cls._parse_echo('[CQ:json,data={"keys":["a"],"desc":"分享"}]')
+    check("回显解析：data 含 ] 截断出的残渣不做文本比对",
+          esig == "json" and ('"' in eresid or "{" in eresid))
+
+    # ---- 场景 1：JSON 分享卡（截图主场景）----
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_msg", group_id=933002,
+                          message='[CQ:json,data={"app":"com.tencent.gamehelper","desc":"分享"}]')
+    check("JSON 卡外发已记段签名", any(sig == "json" for _u, _t, _ts, sig in p._outbound_texts))
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002,
+                             "raw_message": '{"app":"com.tencent.gamehelper","desc":"小黑盒分享"}'})
+    check("JSON 卡回显（原始 JSON）不再触发接管", p._session_mute_left(grp) == 0)
+
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_msg", group_id=933002,
+                          message='[CQ:json,data={"keys":["a"],"desc":"分享"}]')
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002,
+                             "raw_message": '[CQ:json,data={"keys":["a"],"desc":"分享"}]'})
+    check("JSON 卡回显（CQ 形式、data 含 ]）不再触发接管", p._session_mute_left(grp) == 0)
+
+    # ---- 场景 2：合并转发 ----
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_forward_msg", group_id=933002,
+                          messages=[{"type": "node",
+                                     "data": {"content": [{"type": "text",
+                                                           "data": {"text": "合并转发内容"}}]}}])
+    check("合并转发外发已记 forward 签名",
+          any("forward" in (sig or "").split(",") for _u, _t, _ts, sig in p._outbound_texts))
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002, "raw_message": "[CQ:forward,id=abc123]"})
+    check("合并转发回显（[CQ:forward]）不再触发接管", p._session_mute_left(grp) == 0)
+
+    # ---- 场景 3：图片 ----
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_msg", group_id=933002,
+                          message='[CQ:image,file=x.jpg,subType=0]')
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002, "raw_message": "[CQ:image,file=x.jpg,subType=0]"})
+    check("图片回显（无文本可对账）不再触发接管", p._session_mute_left(grp) == 0)
+
+    # ---- 场景 4：机器人只发过文字时，真人手机发卡片/图片必须照常接管 ----
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_msg", group_id=933002,
+                          message=[{"type": "text", "data": {"text": "晚安哦"}}])
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002,
+                             "raw_message": '{"app":"com.tencent.gamehelper","desc":"真人手机分享"}'})
+    check("机器人只发过文字时真人 JSON 卡仍触发接管", p._session_mute_left(grp) > 0)
+    p._session_mutes.pop(grp, None)
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002, "raw_message": "[CQ:image,file=owner.jpg]"})
+    check("机器人只发过文字时真人图片仍触发接管", p._session_mute_left(grp) > 0)
+    p._session_mutes.pop(grp, None)
+
+    # ---- 场景 5：纯文本行为不变（v3.3.5 语义）----
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_msg", group_id=933002,
+                          message=[{"type": "text", "data": {"text": "机器人主动发的"}}])
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002, "raw_message": "机器人主动发的"})
+    check("纯文本同文回显不触发接管（行为不变）", p._session_mute_left(grp) == 0)
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002, "raw_message": "真人说的不一样的话"})
+    check("纯文本异文仍触发接管（行为不变）", p._session_mute_left(grp) > 0)
+    p._session_mutes.pop(grp, None)
+
+    # ---- 场景 6：图文混发（签名 + 干净残余文本双对上）----
+    p._outbound_texts.clear()
+    await bot.call_action("send_group_msg", group_id=933002,
+                          message='[CQ:image,file=a.jpg]看这张图')
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933002, "raw_message": "[CQ:image,file=a.jpg]看这张图"})
+    check("图文混发回显不触发接管", p._session_mute_left(grp) == 0)
+
+    await p.terminate()
+
+    # ---- 场景 7：bot.api.call_action 咽喉包装（真实 CQHttp 的所有动作入口）----
+    abot = _ApiBot()
+    actx = FakeWebContext(bot=abot, platform_id="qq-linux-bot")
+    ap = mod.AIRightsPlugin(actx, cfg)
+    await ap.initialize()
+    check("api 层已包装 bot.api.call_action", getattr(abot, "_ai_rights_send_hooked", False))
+    await abot.api.call_action("send_group_msg", group_id=933002,
+                               message='[CQ:json,data={"k":1}]')
+    check("api 层发送已记段签名", any(sig == "json" for _u, _t, _ts, sig in ap._outbound_texts))
+    await abot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                              "group_id": 933002, "raw_message": '{"app":"x","desc":"y"}'})
+    check("api 层 JSON 卡回显不再触发接管", ap._session_mute_left(grp) == 0)
+    await ap.terminate()
 
 
 async def _run_v9(mod, state_path):
@@ -1501,6 +1645,9 @@ def main():
 
         print("== message_id 对账（v3.3.4 真人接管不再被 3 秒窗误吞）==")
         asyncio.run(_run_v17(mod, os.path.join(os.path.dirname(state_path), "state_v17.json")))
+
+        print("== 非文本回显签名对账（v3.3.6 卡片/转发自触发修复）==")
+        asyncio.run(_run_v18(mod, os.path.join(os.path.dirname(state_path), "state_v18.json")))
 
         print("== 持久化迁移（v3.2.2 市场规范）==")
         asyncio.run(_run_v15(mod, os.path.join(os.path.dirname(state_path), "state_v15.json")))

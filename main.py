@@ -181,9 +181,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.5")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.6")
 class AIRightsPlugin(Star):
-    version = "v3.3.5"
+    version = "v3.3.6"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -236,7 +236,7 @@ class AIRightsPlugin(Star):
         self._bus_last_takeover_umo = ""   # 最近一次触发的会话键（诊断）
         self._seen_platform_ids: set = set()   # 管线中观察到的平台实例 id
         self._seen_umo_by_session: dict = {}   # session_id -> 真实 umo（管线里学到的）
-        self._outbound_texts: deque = deque()  # (umo, 文本, 时间) 机器人最近外发文本
+        self._outbound_texts: deque = deque()  # (umo, 文本, 时间, 非文本段签名) 机器人最近外发记录
         self._own_msg_ids: dict = {}           # message_id -> 发出时间（API 响应对账，判定回显的最硬证据）
         self._bus_platform_ids: list = []      # 订阅总线时记录的平台实例 id
         self._raw_counts: dict = {}            # 原始 payload 计数（post_type -> n，诊断用）
@@ -399,27 +399,93 @@ class AIRightsPlugin(Star):
             return "inbound"
         return "unknown"
 
-    def _remember_outbound_text(self, umo: str, text: str) -> None:
-        """统一外发记录：机器人账号发出的任何文本都登记到这里。
+    def _remember_outbound_text(self, umo: str, text: str, sig: str = "") -> None:
+        """统一外发记录：机器人账号发出的任何消息都登记到这里。
 
         同号接管判定只认这本账：自身消息与记录一致 = 机器人发的；不一致 = 真人。
+        文本可空的场景（图片/JSON 卡片/合并转发）靠 sig（非文本段类型签名）对账，
+        所以 sig 非空时即使文本为空也要入账。
         """
         text = (text or "").strip()
-        if not umo or not text:
+        if not umo or (not text and not sig):
             return
         now = time.time()
-        self._outbound_texts.append((umo, text[:200], now))
+        self._outbound_texts.append((umo, text[:200], now, sig))
         guard = max(30.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
         while self._outbound_texts and self._outbound_texts[0][2] < now - guard:
             self._outbound_texts.popleft()
 
-    def _note_own_send(self, umo: str, text: str) -> None:
+    def _note_own_send(self, umo: str, text: str, sig: str = "") -> None:
         """插件主动发消息后登记外发记录，防止被同号接管开关误判为真人发言。"""
         try:
             self._outbound_ts[umo] = time.time()
-            self._remember_outbound_text(umo, text)
+            self._remember_outbound_text(umo, text, sig)
         except Exception:
             pass
+
+    @staticmethod
+    def _cq_sig(message) -> str:
+        """提取待发消息的非文本段类型签名（排序去重、逗号连接）。
+
+        JSON 卡片/图片/合并转发等非文本消息没有可对账的文本，改用段类型签名
+        对账：机器人刚发出的卡片与协议端回显的卡片段类型必然一致。text 段
+        不算签名；转发节点段（node）回显时统一表现为 [CQ:forward,...]，一并
+        记入 forward。
+        """
+        try:
+            types: set[str] = set()
+            if isinstance(message, str):
+                s = message.lstrip()
+                if s.startswith("{"):
+                    types.add("json")
+                elif s.startswith("<"):
+                    types.add("xml")
+                for m in re.finditer(r"\[CQ:([a-zA-Z0-9_.-]+)", message):
+                    types.add(m.group(1).lower())
+            else:
+                segs = message if isinstance(message, (list, tuple)) else getattr(message, "message", None) or []
+                for seg in segs:
+                    if isinstance(seg, str):
+                        st = seg.strip()
+                        if st.startswith("{"):
+                            types.add("json")
+                        elif st.startswith("<"):
+                            types.add("xml")
+                        for m in re.finditer(r"\[CQ:([a-zA-Z0-9_.-]+)", seg):
+                            types.add(m.group(1).lower())
+                        continue
+                    if isinstance(seg, dict):
+                        t = str(seg.get("type") or "").strip().lower()
+                    else:
+                        t = str(getattr(seg, "type", "") or "").strip().lower()
+                    if t:
+                        types.add(t)
+            types.discard("text")
+            types.discard("plain")  # AstrBot 管线文本组件（Plain）等价于 text 段
+            if "node" in types:
+                types.add("forward")
+            return ",".join(sorted(types))
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _parse_echo(text: str) -> tuple[str, str]:
+        """解析 message_sent 回显 raw_message：返回（非文本段签名, 残余文本）。
+
+        兼容两种形态：CQ 码串（[CQ:json,data=...]）与协议端直接吐出的原始
+        JSON/XML 字符串。json/xml 卡片的 data 内可能含 "]"，无法可靠截断出
+        纯文本残余——残余里若带 {}"[] 等 payload 痕迹，调用方应视作不可信。
+        """
+        s = str(text or "").strip()
+        if s.startswith("{"):
+            return "json", ""
+        if s.startswith("<"):
+            return "xml", ""
+        types: set[str] = set()
+        for m in re.finditer(r"\[CQ:([a-zA-Z0-9_.-]+)", s):
+            types.add(m.group(1).lower())
+        resid = re.sub(r"\[CQ:[a-zA-Z0-9_.-]+[^\]]*\]", "", s)
+        return ",".join(sorted(types)), resid.strip()
 
     def _record_own_msg_id(self, resp) -> None:
         """记录协议端发送响应中的消息号，适配器响应可能把 result 嵌套在对象内。"""
@@ -482,8 +548,14 @@ class AIRightsPlugin(Star):
     def _looks_like_own_outbound(self, umo: str, text: str) -> bool:
         """这条消息是否确系「本进程刚刚主动发出」的回显。
 
-        判定极保守：必须能在最近的外发记录里找到同一会话、且文本一致；
-        文本不同的（真人手打）一律不算，防止"AI 刚说完话后真人紧接着发言"被误吞。
+        分层判定，全部只看同一会话 + 守卫窗口内的外发记录：
+        1. 回显带非文本签名（JSON 卡片/图片/转发等）：签名与外发记录有交集；
+           残余文本「干净」且非空时还须与记录文本一致（bot 混合消息两端都记）。
+           残余带 {}"[] 等痕迹说明是卡片 data 被截断的碎屑，不可当文本比对；
+        2. 纯文本回显：与外发记录文本精确一致（去 CQ 码/空白后完全相等）；
+        3. 既无文本也无签名（个别协议端的极简表示）：时间窗兜底。
+        判定从紧：真人手打的文本不同一律不算，防止「AI 刚说完话后真人紧接着
+        发言」被误吞；宁可极少数接管晚一拍，不能 AI 自己静音自己。
         """
         now = time.time()
         guard = max(5.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
@@ -492,11 +564,27 @@ class AIRightsPlugin(Star):
         if not self._outbound_texts:
             return False
         norm = lambda s: re.sub(r"\s+", "", re.sub(r"\[CQ:[^\]]*\]", "", str(s or "")))[:200]
-        target = norm(text)
+        echo_sig, resid = self._parse_echo(text)
+        target = norm(resid) if echo_sig else norm(text)
+        if echo_sig:
+            sigs = set(echo_sig.split(","))
+            clean_resid = bool(target) and not re.search(r'[{}"\[\]]', resid)
+            for u, t, ts, sig in self._outbound_texts:
+                if now - ts > guard or u != umo or not sig:
+                    continue
+                if not sigs.intersection(sig.split(",")):
+                    continue
+                if clean_resid:
+                    nt = norm(t)
+                    if nt and nt == target:
+                        return True
+                    continue
+                return True
+            return False
         if not target:
-            # 无文本（图片等）：只有明确的机器人外发记录才可能是回显
-            return any(now - ts <= guard and u == umo for u, _t, ts in self._outbound_texts)
-        for u, t, ts in self._outbound_texts:
+            # 无文本无签名（纯表情/图片的极简表示）：只有明确的外发记录才可能是回显
+            return any(now - ts <= guard and u == umo for u, _t, _s, ts in self._outbound_texts)
+        for u, t, ts, _sig in self._outbound_texts:
             if now - ts > guard or u != umo:
                 continue
             nt = norm(t)
@@ -688,13 +776,13 @@ class AIRightsPlugin(Star):
         orig_call = getattr(bot, "call_action", None)
         hooked = False
 
-        def _remember(mt: str, sid: str, text: str) -> None:
+        def _remember(mt: str, sid: str, text: str, sig: str = "") -> None:
             if not sid:
                 return
             umo = f"{pid}:{'GroupMessage' if mt == 'group' else 'FriendMessage'}:{sid}"
             now = time.time()
             self._outbound_ts[umo] = now
-            self._remember_outbound_text(umo, text)
+            self._remember_outbound_text(umo, text, sig)
 
         def _session_of(params: dict) -> tuple[str, str]:
             gid = params.get("group_id")
@@ -703,6 +791,21 @@ class AIRightsPlugin(Star):
             if gid is not None or mt == "group":
                 return "group", str(gid or "")
             return "private", str(uid or "")
+
+        def _log_send_params(action, params: dict) -> None:
+            a = str(action).strip().lower()
+            if not a.startswith("send_"):
+                return
+            mt, sid = _session_of(params)
+            if not sid:
+                return
+            if "forward" in a:
+                # 合并转发（send_*_forward_msg）：内容在 messages 节点里，没有
+                # 可提取的 message，协议端回显统一表现为 [CQ:forward,...]
+                _remember(mt, sid, "", "forward")
+            elif params.get("message") is not None:
+                msg = params.get("message")
+                _remember(mt, sid, self._text_from_message(msg), self._cq_sig(msg))
 
         if callable(orig_send):
             async def _send(event_or_ctx, message, *a, **kw):
@@ -716,7 +819,7 @@ class AIRightsPlugin(Star):
                     params.update(kw)
                     mt, sid = _session_of(params)
                     if sid:
-                        _remember(mt, sid, self._text_from_message(message))
+                        _remember(mt, sid, self._text_from_message(message), self._cq_sig(message))
                 except Exception:
                     pass
                 ret = await orig_send(event_or_ctx, message, *a, **kw)
@@ -731,11 +834,7 @@ class AIRightsPlugin(Star):
         if callable(orig_call):
             async def _call(action, **params):
                 try:
-                    a = str(action).strip().lower()
-                    if a in ("send_msg", "send_group_msg", "send_private_msg"):
-                        mt, sid = _session_of(params)
-                        if sid:
-                            _remember(mt, sid, self._text_from_message(params.get("message")))
+                    _log_send_params(action, params)
                 except Exception:
                     pass
                 ret = await orig_call(action, **params)
@@ -747,13 +846,36 @@ class AIRightsPlugin(Star):
             except Exception as e:
                 logger.debug(f"[ai_rights] 包装 bot.call_action 失败: {e}")
 
+        # bot.api 是所有 OneBot 动作的真正汇合点（bot.send_group_msg 等快捷
+        # 方法和部分适配器路径都经 Api.call_action），兜住绕过 bot.call_action
+        # 的发送。与上层钩子重复记账无害（同一会话的等值记录）。
+        api_obj = getattr(bot, "api", None)
+        orig_api_call = getattr(api_obj, "call_action", None) if api_obj is not None else None
+        if callable(orig_api_call):
+            async def _api_call(action, **params):
+                try:
+                    _log_send_params(action, params)
+                except Exception:
+                    pass
+                ret = await orig_api_call(action, **params)
+                self._record_own_msg_id(ret)
+                return ret
+            try:
+                api_obj.call_action = _api_call
+                hooked = True
+            except Exception as e:
+                logger.debug(f"[ai_rights] 包装 bot.api.call_action 失败: {e}")
+            api_entry = (api_obj, orig_api_call)
+        else:
+            api_entry = None
+
         if hooked:
             bot._ai_rights_send_hooked = True
-            self._api_hooked_bots.append((bot, orig_send, orig_call))
+            self._api_hooked_bots.append((bot, orig_send, orig_call, api_entry))
         return hooked
 
     def _uninstall_outbound_api_hook(self):
-        for bot, orig_send, orig_call in getattr(self, "_api_hooked_bots", None) or []:
+        for bot, orig_send, orig_call, api_entry in getattr(self, "_api_hooked_bots", None) or []:
             try:
                 bot.send = orig_send
             except Exception:
@@ -762,6 +884,12 @@ class AIRightsPlugin(Star):
                 bot.call_action = orig_call
             except Exception:
                 pass
+            if api_entry:
+                try:
+                    api_obj, orig_api_call = api_entry
+                    api_obj.call_action = orig_api_call
+                except Exception:
+                    pass
         self._api_hooked_bots = []
 
     def _install_raw_hook(self, bot) -> bool:
@@ -951,50 +1079,6 @@ class AIRightsPlugin(Star):
                 keys.append(k)
         return keys
 
-    def _match_outbound_echo(self, text: str, umo_candidates: list[str], short_window: bool = True) -> bool:
-        """内容匹配判定「这是机器人自己刚发的回显」。
-
-        比纯时间窗可靠：守卫时间内文本与任意外发记录一致（或无法比文本）才算回显；
-        真人手打的文本不同 → 不算回显，正常触发接管。
-        极短窗口兜底：本会话在 3 秒内有外发 → 大概率是非文本输出（JSON 卡片、图片等）的回显。
-        """
-        guard = max(5.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
-        now = time.time()
-        while self._outbound_texts and now - self._outbound_texts[0][2] > guard:
-            self._outbound_texts.popleft()
-        if not self._outbound_texts:
-            return False
-
-        def norm(s: str) -> str:
-            return re.sub(r"\s+", "", str(s or ""))[:80]
-
-        target = norm(re.sub(r"\[CQ:[^\]]*\]", "", str(text or "")))
-        recent_same_session = any(
-            now - ts <= guard and umo in umo_candidates for umo, _t, ts in self._outbound_texts
-        )
-        if not target:
-            # 无文本（图片/表情/@ 等）：回退时间窗行为
-            return recent_same_session
-        for umo, t, ts in self._outbound_texts:
-            if now - ts > guard:
-                continue
-            nt = norm(t)
-            if not nt:
-                continue
-            if nt and nt == target:
-                return True
-
-        # 非文本的 message_sent 回显没有可比较文本时才用极短窗兜底。文本内容不同
-        # 或相似都不能证明是机器人发的；以内容片段匹配会吞掉真人复述/引用 AI 的消息。
-        if short_window and not target:
-            recent_send = max(
-                (_to_float(self._outbound_ts.get(c, 0.0), 0.0) for c in umo_candidates),
-                default=0.0,
-            )
-            if recent_send > 0 and now - recent_send <= 3.0:
-                return True
-
-        return False
 
     async def _on_self_message_bus(self, ev):
         """message_sent 事件（aiocqhttp.Event，dict 子类）：同号手机消息 → 立即接管。"""
@@ -1518,8 +1602,15 @@ class AIRightsPlugin(Star):
                 result = event.get_result()
                 text = result.get_plain_text() if result is not None else ""
             except Exception:
-                text = ""
-            self._remember_outbound_text(umo, text)
+                result, text = None, ""
+            sig = ""
+            try:
+                chain = getattr(result, "chain", None) if result is not None else None
+                if chain:
+                    sig = self._cq_sig(list(chain))
+            except Exception:
+                sig = ""
+            self._remember_outbound_text(umo, text, sig)
         except Exception:
             pass
 
