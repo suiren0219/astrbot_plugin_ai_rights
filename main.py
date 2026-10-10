@@ -181,9 +181,9 @@ class _KeywordMatcher:
         return any(kw in low for kw in self._cjk) or any(r.search(low) for r in self._ascii_res)
 
 
-@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.2")
+@register("ai_rights", "user", "做人——真人接管静音、AI 反骚扰（刷屏/辱骂/屡犯升级/LLM 裁量）、话题守护（无意义/跑题不答）、群范围管控、黑名单、申诉、年报、MIUI 面板", "v3.3.5")
 class AIRightsPlugin(Star):
-    version = "v3.3.2"
+    version = "v3.3.5"
 
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -340,6 +340,19 @@ class AIRightsPlugin(Star):
             "1", "true", "yes", "on", "self", "outbound", "outgoing", "sent"
         }
 
+    @classmethod
+    def _event_payload_value(cls, event, name: str):
+        """Read fields AstrBot may place on Event, message_obj, or raw_message dict."""
+        message_obj = getattr(event, "message_obj", None)
+        for owner in (event, message_obj):
+            value = cls._payload_field(owner, name)
+            if value is not None:
+                return value
+            raw = cls._payload_field(owner, "raw_message")
+            if isinstance(raw, dict) and raw.get(name) is not None:
+                return raw.get(name)
+        return None
+
     def _self_message_direction(self, event: AstrMessageEvent) -> str:
         """识别同号消息方向：inbound=手机真人入站，outbound=机器人发送回显，unknown=协议没标记。
 
@@ -357,9 +370,16 @@ class AIRightsPlugin(Star):
                 key in owner for key in (
                     "post_type", "message_type", "is_self", "from_self", "is_outbound",
                     "outbound", "is_sent", "direction", "message_direction", "status",
+                    "target_id", "message_id",
                 )
             ):
                 raw.update(owner)
+        if not raw and message_obj is not None:
+            raw = {k: self._payload_field(message_obj, k) for k in (
+                "post_type", "message_type", "is_self", "from_self", "is_outbound",
+                "outbound", "is_sent", "direction", "message_direction", "status",
+                "target_id", "message_id",
+            ) if self._payload_field(message_obj, k) is not None}
 
         owners = (raw, event, message_obj)
         post_type = str(raw.get("post_type") or "").strip().lower()
@@ -402,20 +422,31 @@ class AIRightsPlugin(Star):
             pass
 
     def _record_own_msg_id(self, resp) -> None:
-        """从发送 API 的响应里记下 message_id（同号回显对账的最硬证据）。
-
-        机器人经协议端发出的每条消息，服务端都会分配一个 message_id 并随发送
-        响应返回；随后 NapCat 上报的 message_sent 回显带同一个号。号对得上 =
-        本进程发的回显；对不上 = 持有者用手机发的真人消息，与文本、时序无关。
-        """
+        """记录协议端发送响应中的消息号，适配器响应可能把 result 嵌套在对象内。"""
         try:
+            pending = [resp]
+            seen: set[int] = set()
             mid = None
-            if isinstance(resp, dict):
-                mid = resp.get("message_id")
-            else:
-                mid = getattr(resp, "message_id", None)
-                if mid is None and hasattr(resp, "get"):
-                    mid = resp.get("message_id")
+            while pending:
+                current = pending.pop(0)
+                if current is None or id(current) in seen:
+                    continue
+                seen.add(id(current))
+                if isinstance(current, dict):
+                    mid = current.get("message_id")
+                    if mid is None:
+                        pending.extend(current.get(k) for k in ("data", "result", "ret", "raw"))
+                else:
+                    mid = getattr(current, "message_id", None)
+                    if mid is None and hasattr(current, "get"):
+                        try:
+                            mid = current.get("message_id")
+                        except Exception:
+                            pass
+                    if mid is None:
+                        pending.extend(getattr(current, k, None) for k in ("data", "result", "ret", "raw"))
+                if mid is not None:
+                    break
             if mid is None:
                 return
             now = time.time()
@@ -427,44 +458,26 @@ class AIRightsPlugin(Star):
             pass
 
     def _is_own_echo(self, text: str, umo_candidates: list[str], message_id=None) -> bool:
-        """判定一条同号 message_sent 是否为「本进程刚发出的回显」。
+        """自身回显判定：消息号账本优先，不中再用精确文本兜底。
 
-        证据链从硬到软：
-        ① message_id 对账：账本里有这个号 = 本进程 API 发出的，最硬，不看文本不看时间；
-        ② 外发文本内容匹配：覆盖账本漏记的纯文本发送；
-        ③ 非文本载荷（图/JSON 卡片/转发，剥掉 CQ 码后无字）→ 3 秒极短窗兜底；
-        ④ 有消息号但对不上账、且是带字的文本 → 真人手打，绝不吞（v3.3.3 前
-           3 秒窗口会把「AI 刚说完话后真人紧接着发言」误判为回显，正是用户
-           反复复现的「接管之后 AI 还在说话」的根因）。
+        不能只信消息号：NapCat 广播自身消息回显（message_sent）与 API 发送回执
+        走同一条 WS，回显往往先于发送回执到达——此刻账本里还没有这个
+        message_id，只信消息号会把机器人刚发出的消息误判成真人接管
+        （「AI 自己触发」）。而发送参数里的文本在 await 发送之前就已入账，
+        不受该竞态影响，所以账本不中时必须回落到文本兜底。
+        文本兜底是精确相等（同会话 + 去掉 CQ 码/空白后完全一致）：真人复述、
+        引用或相似文本都不会误中；代价只是真人在守卫窗口内原样复读机器人
+        刚说过的话会被当成回显吞掉一次接管，远比 AI 自己静音自己轻。
         """
-        now = time.time()
         if message_id is not None:
             ts = self._own_msg_ids.get(str(message_id))
-            if ts is not None:
-                return now - ts <= 120.0
-        guard = max(5.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
-        while self._outbound_texts and now - self._outbound_texts[0][2] > guard:
-            self._outbound_texts.popleft()
-        target = re.sub(r"\s+", "", re.sub(r"\[CQ:[^\]]*\]", "", str(text or "")))[:80]
-        if target:
-            for u, t, ts in self._outbound_texts:
-                if now - ts > guard or u not in umo_candidates:
-                    continue
-                nt = re.sub(r"\s+", "", str(t or ""))[:80]
-                if nt and (nt == target or (len(target) >= 2 and target in nt) or (len(nt) >= 2 and nt in target)):
-                    return True
-            if message_id is not None:
-                return False  # 带字、对不上账 → 真人手机发言
-        elif message_id is not None:
-            recent = max(
-                (_to_float(self._outbound_ts.get(c, 0.0), 0.0) for c in umo_candidates),
-                default=0.0,
-            )
-            return recent > 0 and now - recent <= 3.0
-        # 无消息号（老协议端）：保持原内容判定，且不带 3 秒窗——
-        # 带字的入站对不上账就是真人手打，时间窗只会把它误吞
-        return self._looks_like_own_outbound(umo_candidates[0], text) \
-            or self._match_outbound_echo(text, umo_candidates, short_window=False)
+            if ts is not None and time.time() - ts <= 120.0:
+                return True
+        for umo in umo_candidates:
+            if umo and self._looks_like_own_outbound(umo, text):
+                return True
+        return False
+
 
     def _looks_like_own_outbound(self, umo: str, text: str) -> bool:
         """这条消息是否确系「本进程刚刚主动发出」的回显。
@@ -478,18 +491,16 @@ class AIRightsPlugin(Star):
             self._outbound_texts.popleft()
         if not self._outbound_texts:
             return False
-        norm = lambda s: re.sub(r"\s+", "", re.sub(r"\[CQ:[^\]]*\]", "", str(s or "")))[:80]
+        norm = lambda s: re.sub(r"\s+", "", re.sub(r"\[CQ:[^\]]*\]", "", str(s or "")))[:200]
         target = norm(text)
         if not target:
-            # 无文本（图片等）：无法比对内容，只能在守卫时间内保守认为可能是自己发的
+            # 无文本（图片等）：只有明确的机器人外发记录才可能是回显
             return any(now - ts <= guard and u == umo for u, _t, ts in self._outbound_texts)
         for u, t, ts in self._outbound_texts:
-            if now - ts > guard:
-                continue
-            if u != umo:
+            if now - ts > guard or u != umo:
                 continue
             nt = norm(t)
-            if nt and (nt == target or (len(target) >= 2 and target in nt) or (len(nt) >= 2 and nt in target)):
+            if nt and nt == target:
                 return True
         return False
 
@@ -507,30 +518,17 @@ class AIRightsPlugin(Star):
         if not include_self and not takeover_self:
             return False
 
-        # 强力开关（默认开）：同号消息一律视为真人接管，除非能确认是本进程发出的。
-        # 判定链（_is_own_echo）：message_id 对账 → 外发文本匹配 → 非文本 3 秒窗；
-        # 带字且对不上账的纯文本 = 真人手打，绝不吞。
-        if takeover_self:
-            mid = None
-            try:
-                mid = getattr(getattr(event, "message_obj", None), "message_id", None)
-            except Exception:
-                mid = None
-            if self._is_own_echo(text, [umo], mid):
-                return False   # 确系机器人主动发出 → 不接管
-            return True        # 其余一律视为持有者用手机接管
-
         direction = self._self_message_direction(event)
         if direction == "outbound":
-            # 机器人主动发送/平台 message_sent 回执绝不能把机器人自己再次静音。
             return False
-        if direction == "inbound":
-            # 同一个 QQ 账号从手机端发来的普通入站消息：立即进入真人接管。
-            return True
-
-        # 旧协议完全不带方向字段时保留旧守卫，避免机器人回显误触发。
-        guard = max(1.0, _to_float(self._cfg_get("self_echo_guard_seconds", 15), 15.0))
-        return time.time() - self._outbound_ts.get(umo, 0.0) > guard
+        if direction in {"inbound", "unknown"}:
+            # 管线事件也带真实消息号（适配器 abm.message_id = str(event.message_id)），
+            # 能对上发送回执账本即确系机器人自己发的回显；账本不中（回显先于回执
+            # 到达等竞态）时由 _is_own_echo 内部回落到严格文本匹配，统一不直接判真人。
+            mid = self._event_payload_value(event, "message_id")
+            if self._is_own_echo(text, [umo], mid):
+                return False
+        return direction in {"inbound", "unknown"}
 
     def _trigger_session_mute(self, umo: str) -> bool:
         """真人发言 → 静音/续期。返回是否为「新一次静音开始」。"""
@@ -694,6 +692,8 @@ class AIRightsPlugin(Star):
             if not sid:
                 return
             umo = f"{pid}:{'GroupMessage' if mt == 'group' else 'FriendMessage'}:{sid}"
+            now = time.time()
+            self._outbound_ts[umo] = now
             self._remember_outbound_text(umo, text)
 
         def _session_of(params: dict) -> tuple[str, str]:
@@ -741,11 +741,11 @@ class AIRightsPlugin(Star):
                 ret = await orig_call(action, **params)
                 self._record_own_msg_id(ret)
                 return ret
-        try:
-            bot.call_action = _call
-            hooked = True
-        except Exception as e:
-            logger.debug(f"[ai_rights] 包装 bot.call_action 失败: {e}")
+            try:
+                bot.call_action = _call
+                hooked = True
+            except Exception as e:
+                logger.debug(f"[ai_rights] 包装 bot.call_action 失败: {e}")
 
         if hooked:
             bot._ai_rights_send_hooked = True
@@ -816,23 +816,33 @@ class AIRightsPlugin(Star):
             self._bus_last_skip = f"非自身消息（user_id={user_id} != self_id={self_id}）"
             return
         payload["_ai_rights_raw_handled"] = True
+        # 同号私聊的 message_sent 在 NapCat 中没有对方 QQ，无法找到正确会话，因此
+        # 只支持群聊：用 group_id 精确静音对应群。群内回显优先按 message_id 对账，
+        # 账本不中再按精确文本兜底（见 _is_own_echo），都排除了才判手机接管。
         group_id = payload.get("group_id")
         target_id = payload.get("target_id")
         mt = str(payload.get("message_type") or "").strip().lower()
         is_group = bool(group_id) or mt == "group"
-        # 私聊 message_sent：NapCat 不带对方 QQ（user_id 是发送者=自己），
-        # target_id 存在时用它作为会话；否则无法定位会话，只按铁律压制不接管
-        peer = str(target_id if target_id is not None else "")
         if is_group:
             gid = str(group_id)
-        elif peer and peer != self_id:
-            gid = peer
         else:
-            gid = str(user_id)  # 自聊会话
+            # 私聊：协议端带 target_id（对方 QQ）时才能定位会话——持有者用手机在
+            # 私聊里回复好友也该接管。没有对方标识（旧版协议端）或对方是自己
+            # （自聊）都无法安全接管，跳过防止静错会话。
+            if not target_id or str(target_id) == self_id:
+                self._bus_last_skip = "私聊自身消息无对方会话标识，无法安全接管"
+                return
+            gid = str(target_id)
         text = str(payload.get("raw_message") or "").strip()
+        message_id = payload.get("message_id")
+        # 统一回显判定：消息号账本优先；账本里没有（回显先于发送回执到达、
+        # 或发送走了未挂钩路径）时回落到精确文本兜底，不能直接判真人接管。
+        if self._is_own_echo(text, self._candidate_session_keys(is_group, gid), message_id):
+            self._bus_last_skip = "确认是机器人外发回显（message_id 对账/文本兜底）"
+            return
         await self._handle_self_takeover(
-            is_group, gid, text, source="原始层", self_id=self_id,
-            message_id=payload.get("message_id"),
+            is_group, gid, text, source="原始层", self_id=self_id, message_id=message_id,
+            echo_checked=True,
         )
 
     def _patch_event_from_payload(self) -> bool:
@@ -872,7 +882,7 @@ class AIRightsPlugin(Star):
         return True
 
     async def _handle_self_takeover(self, is_group: bool, gid: str, text: str, source: str = "总线",
-                                    self_id: str = "", message_id=None) -> None:
+                                    self_id: str = "", message_id=None, echo_checked: bool = False) -> None:
         """同号手机消息的统一接管处理（原始层与总线层共用）。"""
         # 自聊会话（机器人账号给自己发消息）：没有需要静默的对象，不接管、不通知
         if not is_group and self_id and str(gid) == str(self_id):
@@ -880,8 +890,8 @@ class AIRightsPlugin(Star):
             return
         umo_candidates = self._candidate_session_keys(is_group, gid)
         text = (text or "").strip()
-        if self._is_own_echo(text, umo_candidates, message_id):
-            self._bus_last_skip = "判定为机器人自身回显（message_id 对账/内容匹配）"
+        if not echo_checked and self._is_own_echo(text, umo_candidates, message_id):
+            self._bus_last_skip = "判定为机器人自身回显（message_id 对账/严格文本匹配）"
             return
         if text and any(text.startswith(p) for p in self._ignore_prefixes()):
             self._bus_last_skip = "指令消息（前缀豁免）"
@@ -971,16 +981,12 @@ class AIRightsPlugin(Star):
             nt = norm(t)
             if not nt:
                 continue
-            # 文本一致（允许 CQ 码/空白差异用包含判断）→ 是机器人回显；
-            # 文本不同 → 是真人手打，哪怕同会话刚发过消息也要触发接管。
-            if nt == target or (len(target) >= 2 and target in nt) or (len(nt) >= 2 and nt in target):
+            if nt and nt == target:
                 return True
 
-        # 极短窗口兜底（可用 short_window 关）：本会话在 3 秒内有外发记录，且文本
-        # 不匹配任何记录 → 大概率是机器人自身非文本输出（JSON 卡片、图片、引用）的
-        # 回显。注意这只该用于「有消息号但对不上账」的场合；无消息号时带字的入站
-        # 更可能是真人手打，不能吞（正是「AI 刚说完话后真人紧接着发言」场景）。
-        if short_window:
+        # 非文本的 message_sent 回显没有可比较文本时才用极短窗兜底。文本内容不同
+        # 或相似都不能证明是机器人发的；以内容片段匹配会吞掉真人复述/引用 AI 的消息。
+        if short_window and not target:
             recent_send = max(
                 (_to_float(self._outbound_ts.get(c, 0.0), 0.0) for c in umo_candidates),
                 default=0.0,
@@ -1019,18 +1025,19 @@ class AIRightsPlugin(Star):
             is_group = bool(group_id)
             if is_group:
                 gid = str(group_id)
-            elif target_id is not None and str(target_id) == self_id:
-                # 自聊会话（机器人账号给自己发消息）：没有需要静默的对象
-                self._bus_last_skip = "自我私聊会话（忽略）"
-                return
-            elif target_id is not None:
-                gid = str(target_id)
             else:
-                gid = str(sender)  # 旧契约兜底：无 target_id 时按发送者会话静音（无副作用）
+                # 私聊：带 target_id（对方 QQ）才能定位会话；没有对方标识或自聊则跳过
+                if not target_id or str(target_id) == self_id:
+                    self._bus_last_skip = "私聊自身消息无对方会话标识，无法安全接管"
+                    return
+                gid = str(target_id)
             umo_candidates = self._candidate_session_keys(is_group, gid)
             text = str(getter("raw_message") or "").strip()
-            if self._is_own_echo(text, umo_candidates, getter("message_id")):
-                self._bus_last_skip = "判定为机器人自身回显（message_id 对账/内容匹配）"
+            message_id = getter("message_id")
+            # 统一回显判定：消息号账本优先；账本里没有时（回显先于发送回执到达）
+            # 回落到精确文本兜底，不能只信消息号——否则机器人刚发的消息会被误判接管。
+            if self._is_own_echo(text, umo_candidates, message_id):
+                self._bus_last_skip = "判定为机器人自身回显（message_id 对账/文本兜底）"
                 return  # 是机器人自己发的 → 不接管
             if text and any(text.startswith(p) for p in self._ignore_prefixes()):
                 self._bus_last_skip = "指令消息（前缀豁免）"

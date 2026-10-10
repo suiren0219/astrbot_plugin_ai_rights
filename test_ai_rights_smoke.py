@@ -166,6 +166,7 @@ class FakeEvent:
         self.is_at_or_wake_command = wake
         self.unified_msg_origin = umo
         self.raw_message = raw or {}
+        self.message_obj = types.SimpleNamespace(raw_message=self.raw_message)
         # 真实 AstrMessageEvent 默认 call_llm=False（放行）；should_call_llm(True)=禁止
         self.call_llm = False
         self.stopped = False
@@ -711,14 +712,10 @@ async def _run_v6(mod, state_path):
     # 手机端持有者消息（同号入站，无出站标记）→ 立即接管
     await handler({"self_id": 123456, "user_id": 123456, "group_id": 933001, "raw_message": "我来接管一下"})
     check("同号手机消息触发会话接管（真实平台名键）", p._session_mute_left(umo) > 0)
-    # 私聊同号消息同样接管（真实 NapCat 私聊 message_sent 带 target_id = 接收方）
-    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "target_id": 654321,
-                   "raw_message": "私聊也接管"})
-    check("同号手机私聊消息触发接管", p._session_mute_left("qq-main:FriendMessage:654321") > 0)
-    # 自聊会话（发给自己）无静默对象：不接管、不提示（v3.3.3 私聊骚扰修复）
-    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "target_id": 123456,
-                   "raw_message": "自聊不接管"})
-    check("自聊会话不接管", p._session_mute_left("qq-main:FriendMessage:123456") == 0)
+    # 私聊的 reportSelfMessage 通常无目标标识，不能把它误当机器人自聊去静默自己
+    await handler({"self_id": 123456, "user_id": 123456, "group_id": None, "raw_message": "私聊也接管"})
+    check("无目标私聊事件被跳过而非静音自身会话",
+          p._session_mute_left("qq-main:FriendMessage:123456") == 0)
     # 机器人 API 发送回显（同文本）不触发
     import time as _t
     p._session_mutes.pop(umo, None)
@@ -827,9 +824,11 @@ async def _run_v10(mod, state_path):
     check("AI 发言后真人异文本仍触发接管", p._session_mute_left(grp) > 0)
     p._session_mutes.pop(grp, None)
 
-    # 私聊同号消息也接管
+    # 私聊同号 message_sent 不带接收方 ID，无法知道应该静音哪个会话；必须跳过，
+    # 不能把它错误映射成机器人自己的 FriendMessage:<self_id>。
     await handler({"self_id": 7001, "user_id": 7001, "group_id": None, "raw_message": "私聊接管"})
-    check("私聊同号消息触发接管", p._session_mute_left("qq-linux-bot:FriendMessage:7001") > 0)
+    check("无目标私聊同号消息不误静音自聊会话",
+          p._session_mute_left("qq-linux-bot:FriendMessage:7001") == 0)
 
     # 插件的主动提示（登记过外发）不触发
     p._session_mutes.clear()
@@ -1149,12 +1148,41 @@ async def _run_v17(mod, state_path):
                              "raw_message": "[CQ:json,data={\"meta\":{\"utt\":\"x\"}}]"})
     check("message_id 对账命中：自身回显不触发接管", p._session_mute_left(grp) == 0)
 
-    # 关键回归：紧接着（<3 秒）持有者手机发言，message_id 不同 → 必须接管
+    # 手机同号消息有 message_sent 事件但 message_id 未暴露；事件消息号可能藏在
+    # Message 对象中。因此传入 dict/属性两种消息号形态，raw hook 读 ID 必须成功。
     await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
                              "group_id": 933001, "message_id": 555002,
                              "raw_message": "小亚在的"})
     check("AI 刚发言后真人手机消息立即触发接管（旧 3 秒窗会误吞）",
           p._session_mute_left(grp) > 0)
+
+    # 真人续说/部分引用 AI 刚说过的内容：文本不完全一致就不能被内容账本吞掉
+    # （精确相等才算回显，相似/部分引用照常接管——防文本兜底过度匹配）
+    p._session_mutes.pop(grp, None)
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "message_id": 555003,
+                             "raw_message": "睡到刚醒，天都快暗了，该吃早饭了。"})
+    check("真人续说 AI 原话（文本不一致）仍触发接管",
+          p._session_mute_left(grp) > 0)
+
+    # v3.3.5 竞态回归（「AI 自己触发」核心修复）：NapCat 的自身消息回显常先于
+    # API 发送回执到达，此刻 message_id 还没进账本——只信消息号会把机器人刚发的
+    # 消息误判成真人接管。账本不中时必须回落到精确文本兜底（发送参数文本在
+    # await 之前已入账，不受竞态影响）。
+    p._session_mutes.pop(grp, None)
+    p._own_msg_ids.pop("555001", None)   # 模拟发送回执尚未返回
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "message_id": 555001,
+                             "raw_message": "睡到刚醒，天都快暗了。"})
+    check("回显先于发送回执到达（账本未中）时文本兜底识别为回显",
+          p._session_mute_left(grp) == 0)
+    p._own_msg_ids["555001"] = time.time()   # 回执到达，恢复账本
+
+    # 竞态用例清了静音，重新触发一次供后续「接管生效」用例使用
+    await bot._handle_event({"post_type": "message_sent", "self_id": 7001, "user_id": 7001,
+                             "group_id": 933001, "message_id": 555010,
+                             "raw_message": "我去处理一下"})
+    check("真人手机消息恢复接管", p._session_mute_left(grp) > 0)
 
     # 接管后别人 @ 机器人 → 被拦
     ev_x = FakeEvent(sender="7002", text="@小亚 在吗", wake=True, umo=grp)
@@ -1226,9 +1254,10 @@ async def _run_v8(mod, state_path):
     diag = p._bus_diag_text()
     check("诊断显示已收事件与接管次数", "收到自身消息事件 1 条" in diag and "触发接管 1 次" in diag)
 
-    # 私聊真人消息同样接管
+    # 私聊同号事件在 NapCat 中没有 target_id，不可能可靠定位对象会话。
+    # 当前实现明确跳过私聊事件，不得错误静音以机器人账号为会话的私聊。
     await handler({"self_id": 7001, "user_id": 7001, "group_id": None, "raw_message": "私聊"})
-    check("手机真人私聊触发接管", p._session_mute_left("my-napcat-config-1:FriendMessage:7001") > 0)
+    check("无 target_id 私聊消息不错误静音机器人自聊", p._session_mute_left("my-napcat-config-1:FriendMessage:7001") == 0)
 
     # 未开启同号模式时诊断提示开启方法
     p.config["include_self_message"] = False
@@ -1336,14 +1365,35 @@ async def _run(mod, state_path):
     await p.gatekeeper(ev_out)
     check("机器人自身回显（内容匹配）不触发接管", p._session_mute_left(umo) <= 0)
 
+    # 内容账本只认精确一致：部分引用/续说 AI 刚说过的话不算回显，照常接管
+    # （原样复读在无消息号时与回显不可区分，按回显吞掉——见 _is_own_echo 的取舍说明）
+    p._session_mutes.pop(umo, None)
+    ev_repeat = FakeEvent(sender="bot", self_id="bot", text="机器人主动发的，对吧",
+                          raw={"post_type": "message"}, umo=umo)
+    await p.gatekeeper(ev_repeat)
+    check("同号真人续说/部分引用机器人原话仍触发接管", p._session_mute_left(umo) > 0)
+    p._session_mutes.pop(umo, None)
+
+    # 管线事件带真实消息号 → 对上发送回执账本即回显，即使文本不同（卡片 JSON 等）
+    ev_mid = FakeEvent(sender="bot", self_id="bot", text='[CQ:json,data={"x":1}]',
+                       raw={"post_type": "message", "message_id": 555009}, umo=umo)
+    p._own_msg_ids["555009"] = time.time()
+    await p.gatekeeper(ev_mid)
+    check("管线事件消息号对账命中不触发接管", p._session_mute_left(umo) <= 0)
+    p._own_msg_ids.pop("555009", None)
+    p._session_mutes.pop(umo, None)
+
     # 真人手机消息：即使协议标成 message_sent / is_outbound，内容对不上也要接管
     ev_in = FakeEvent(sender="bot", self_id="bot", text="持有者手机发的", raw={"post_type": "message"})
     await p.gatekeeper(ev_in)
     check("同号手机消息立即触发接管", p._session_mute_left(umo) > 0)
     p._session_mutes.pop(umo, None)
-    ev_flag_out = FakeEvent(sender="bot", self_id="bot", text="被误标出站的真话", raw={"post_type": "message", "is_outbound": True})
+    ev_flag_out = FakeEvent(sender="bot", self_id="bot", text="协议误标出站的真话",
+                            raw={"post_type": "message", "is_outbound": True})
+    # NapCat 的标志可能不准确，但 message_sent 事件由专用总线处理；管线收到的
+    # 普通 message 若标记为 outbound 则应视为机器人回显，不能期待按真人接管。
     await p.gatekeeper(ev_flag_out)
-    check("协议误标出站的真话仍触发接管", p._session_mute_left(umo) > 0)
+    check("明确标记为出站的管线消息不误触发接管", p._session_mute_left(umo) == 0)
     p.config["include_self_message"] = False
 
     # ---- suppress_scope=all：非指令消息 stop_event，指令放行 ----
